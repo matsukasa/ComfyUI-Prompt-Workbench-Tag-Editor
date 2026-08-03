@@ -20,8 +20,10 @@ it("tracks the dirty state and can reset", () => {
   const tag = useCatalogStore.getState().document!.tags[0];
   useCatalogStore.getState().editTag(tag.uid, "changed", "");
   expect(isDirty(useCatalogStore.getState())).toBe(true);
+  expect(useCatalogStore.getState().touchedTagIds).toContain(tag.uid);
   useCatalogStore.getState().reset();
   expect(isDirty(useCatalogStore.getState())).toBe(false);
+  expect(useCatalogStore.getState().touchedTagIds).toEqual([]);
 });
 
 it("supports ctrl-like toggle and shift-like range selection", () => {

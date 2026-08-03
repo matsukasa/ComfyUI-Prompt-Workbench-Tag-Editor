@@ -76,6 +76,34 @@ function descendants(categories: CategoryNode[], id: string): Set<string> {
   return result;
 }
 
+export function changeCategoryLevel(
+  document: CatalogDocument,
+  id: string,
+  targetLevel: "major" | "medium",
+  targetParentId = "",
+): CatalogDocument {
+  const result = copy(document);
+  const category = result.categories.find((item) => item.id === id);
+  if (!category) return result;
+  if (category.level === "small") throw new Error("小分類は大・中分類へ変更できません。");
+  if (category.level === targetLevel) return result;
+  if (result.categories.some((item) => item.parentId === category.id)) {
+    throw new Error("配下カテゴリがあります。先に子分類を別の分類へ移動してください。");
+  }
+  if (targetLevel === "medium") {
+    const parent = result.categories.find((item) => item.id === targetParentId && item.level === "major");
+    if (!parent) throw new Error("変更先の大分類がありません。");
+    category.parentId = parent.id;
+  } else {
+    category.parentId = "";
+  }
+  category.level = targetLevel;
+  category.order = result.categories.length;
+  normalizeCategoryOrders(result.categories);
+  normalizeTagOrders(result);
+  return result;
+}
+
 export function moveCategory(document: CatalogDocument, activeId: string, overId: string): CatalogDocument {
   const result = copy(document);
   const active = result.categories.find((category) => category.id === activeId);
@@ -86,7 +114,18 @@ export function moveCategory(document: CatalogDocument, activeId: string, overId
 
   let newParentId = active.parentId;
   if (active.level === "major") {
-    if (over.level !== "major") throw new Error("大分類は大分類間だけで並べ替えできます。");
+    if (over.level === "medium") {
+      const changed = changeCategoryLevel(result, active.id, "medium", over.parentId);
+      const changedActive = changed.categories.find((category) => category.id === active.id);
+      const changedOver = changed.categories.find((category) => category.id === over.id);
+      if (changedActive && changedOver) {
+        changedActive.order = changedOver.order - 0.5;
+        normalizeCategoryOrders(changed.categories);
+        normalizeTagOrders(changed);
+      }
+      return changed;
+    }
+    if (over.level !== "major") throw new Error("大分類は大分類または中分類へ移動してください。");
   } else if (active.level === "medium") {
     if (over.level === "major") newParentId = over.id;
     else if (over.level === "medium") newParentId = over.parentId;

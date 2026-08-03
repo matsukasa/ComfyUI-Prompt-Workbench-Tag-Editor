@@ -1,6 +1,5 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronRight, CirclePlus, GripVertical, Search, Tags } from "lucide-react";
+import { ChevronDown, ChevronRight, CirclePlus, GripVertical, History, Search, Tags } from "lucide-react";
 import { useMemo } from "react";
 import { sortedChildren } from "../domain/operations";
 import type { CategoryNode, TagOccurrence } from "../domain/types";
@@ -14,10 +13,14 @@ interface TreeProps {
   selectedMediumId: string | null;
   query: string;
   dragMode: "tag" | "category" | null;
+  activeCategoryLevel: CategoryNode["level"] | null;
+  activeCategoryId: string | null;
   overCategoryId: string | null;
+  changedCategoryIds: Set<string>;
   onQuery: (value: string) => void;
   onToggle: (id: string) => void;
   onSelectMedium: (id: string) => void;
+  onEditCategory: (category: CategoryNode) => void;
   onAddCategory: () => void;
   onExpandAll: (expanded: boolean) => void;
 }
@@ -32,8 +35,12 @@ interface RowProps {
   over: boolean;
   hasChildren: boolean;
   dragMode: TreeProps["dragMode"];
+  activeCategoryLevel: TreeProps["activeCategoryLevel"];
+  activeCategoryId: string | null;
+  changed: boolean;
   onToggle: () => void;
   onSelect: () => void;
+  onEdit: () => void;
 }
 
 function CategoryRow({
@@ -46,8 +53,12 @@ function CategoryRow({
   over,
   hasChildren,
   dragMode,
+  activeCategoryLevel,
+  activeCategoryId,
+  changed,
   onToggle,
   onSelect,
+  onEdit,
 }: RowProps) {
   const draggable = useDraggable({
     id: `category:${category.id}`,
@@ -61,14 +72,26 @@ function CategoryRow({
     draggable.setNodeRef(node);
     droppable.setNodeRef(node);
   };
+  const categoryDropActive =
+    dragMode === "category" && activeCategoryId !== category.id && (over || droppable.isOver);
+  const dropPosition =
+    categoryDropActive && activeCategoryLevel === category.level
+      ? "before"
+      : categoryDropActive &&
+          ((activeCategoryLevel === "medium" && category.level === "major") ||
+            (activeCategoryLevel === "small" && category.level === "medium"))
+        ? "child"
+        : categoryDropActive
+          ? "before"
+          : null;
   const style = {
-    transform: CSS.Translate.toString(draggable.transform),
     paddingLeft: `${12 + depth * 20}px`,
-  };
+    "--drop-inset": `${12 + depth * 20}px`,
+  } as React.CSSProperties;
   return (
     <div
       ref={setNodeRef}
-      className={`category-row level-${category.level} color-${color} ${selected ? "is-selected" : ""} ${over || droppable.isOver ? "is-drop-target" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
+      className={`category-row level-${category.level} color-${color} ${selected ? "is-selected" : ""} ${changed ? "is-modified" : ""} ${dragMode === "tag" && (over || droppable.isOver) ? "is-tag-drop-target" : ""} ${dropPosition === "before" ? "is-drop-before" : ""} ${dropPosition === "child" ? "is-drop-child" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
       style={style}
       onClick={onSelect}
       data-category-id={category.id}
@@ -89,10 +112,22 @@ function CategoryRow({
         {category.level === "major" ? "大" : category.level === "medium" ? "中" : "小"}
       </span>
       <span className="category-label">
-        <strong>{category.labelJa}</strong>
+        <strong
+          className={category.level === "small" ? undefined : "is-editable"}
+          onDoubleClick={(event) => {
+            if (category.level === "small") return;
+            event.stopPropagation();
+            onEdit();
+          }}
+        >
+          {category.labelJa}
+        </strong>
         {category.labelEn && <small>{category.labelEn}</small>}
       </span>
       <span className="category-count">{count.toLocaleString()}</span>
+      <span className="category-change-indicator" title={changed ? "変更済み" : undefined}>
+        {changed && <History aria-label={`${category.labelJa}：変更済み`} />}
+      </span>
       <button
         className="drag-handle"
         type="button"
@@ -108,11 +143,24 @@ function CategoryRow({
           ここへ移動
         </span>
       )}
+      {dragMode === "category" &&
+        activeCategoryLevel === "major" &&
+        category.level === "medium" &&
+        (over || droppable.isOver) && (
+          <span className="drop-copy">
+            <Tags />
+            中分類へ変更
+          </span>
+        )}
     </div>
   );
 }
 
 export function CategoryTree(props: TreeProps) {
+  const { setNodeRef: setMajorLevelTargetRef, isOver: isOverMajorLevelTarget } = useDroppable({
+    id: "category-level:major",
+    data: { type: "category-level-target", targetLevel: "major" },
+  });
   const query = props.query.trim().toLocaleLowerCase();
   const tagCount = useMemo(() => {
     const direct = new Map<string, number>();
@@ -147,8 +195,12 @@ export function CategoryTree(props: TreeProps) {
         over={category.id === props.overCategoryId}
         hasChildren={children.length > 0}
         dragMode={props.dragMode}
+        activeCategoryLevel={props.activeCategoryLevel}
+        activeCategoryId={props.activeCategoryId}
+        changed={props.changedCategoryIds.has(category.id)}
         onToggle={() => props.onToggle(category.id)}
         onSelect={() => category.level === "medium" && props.onSelectMedium(category.id)}
+        onEdit={() => props.onEditCategory(category)}
       />,
     ];
     if (expanded) for (const child of children) rows.push(...renderBranch(child, depth + 1, color));
@@ -201,6 +253,14 @@ export function CategoryTree(props: TreeProps) {
             <GripVertical />
             カテゴリを並べ替え
           </span>
+        </div>
+      )}
+      {props.dragMode === "category" && props.activeCategoryLevel === "medium" && (
+        <div
+          ref={setMajorLevelTargetRef}
+          className={`category-level-drop ${isOverMajorLevelTarget ? "is-over" : ""}`}
+        >
+          ここへドロップして大分類に変更
         </div>
       )}
       <div className="category-tree" role="tree">

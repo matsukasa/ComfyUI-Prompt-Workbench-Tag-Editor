@@ -12,7 +12,7 @@ const sha256 = async (file: string) =>
 
 test("loads, selects, drags, undoes, redoes, exports and reloads without changing source", async ({
   page,
-}) => {
+}, testInfo) => {
   const beforeHash = await sha256(samplePath);
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(samplePath);
@@ -24,7 +24,7 @@ test("loads, selects, drags, undoes, redoes, exports and reloads without changin
 
   await page.getByText("one", { exact: true }).click();
   await page.getByText("two", { exact: true }).click({ modifiers: ["Control"] });
-  await expect(page.getByText("2件を選択中")).toBeVisible();
+  await expect(page.locator(".tag-row.is-selected")).toHaveCount(2);
 
   const source = page.getByRole("button", { name: "oneをドラッグ" });
   const target = page.locator('[data-category-id="small-c"]');
@@ -44,11 +44,17 @@ test("loads, selects, drags, undoes, redoes, exports and reloads without changin
 
   await page.getByRole("button", { name: "元に戻す" }).click();
   await page.getByRole("button", { name: "やり直す" }).click();
+  await page.getByText("アクセサリー", { exact: true }).click();
+  await expect(page.getByLabel("one：移動済み")).toBeVisible();
+  await expect(page.getByLabel("two：移動済み")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("tags-changed.png"), animations: "disabled" });
 
-  await page.getByRole("button", { name: "差分を確認" }).click();
+  await page.getByRole("button", { name: "新しいファイルとして書き出す" }).click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("dialog").getByRole("button", { name: "新しいファイルとして書き出す" }).click();
   const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^sample-tag-catalog_edited_\d{8}_\d{6}\.json$/u);
+  expect(download.suggestedFilename()).not.toBe("tag_catalog.json");
   const downloadPath = await download.path();
   expect(downloadPath).toBeTruthy();
   page.once("dialog", (dialog) => dialog.accept());
@@ -66,9 +72,50 @@ test("renders the actual source catalog without changing it", async ({ page }) =
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(realCatalogPath);
   await expect(page.getByText("tag_catalog.json を読み込みました")).toBeVisible();
+  await page.locator('[data-category-id="legacy_medium:02:wearables"]').click();
+  await expect(page.getByRole("button", { name: "小分類を右へスクロール" })).toBeVisible();
+  await expect(page.locator(".kanban-lane")).toHaveCount(23);
+  const laneScroller = page.locator(".kanban-grid");
+  await expect.poll(() => laneScroller.evaluate((element) => element.scrollLeft)).toBe(0);
+  await page.getByRole("button", { name: "小分類を右へスクロール" }).click();
+  await expect.poll(() => laneScroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
   await page.screenshot({
     path: path.resolve("docs/implementation-1440x1024.png"),
     animations: "disabled",
   });
   expect(await sha256(realCatalogPath)).toBe(beforeHash);
+});
+
+test("aligns the category drag preview with the pointer and shows an insertion line", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  const source = page.getByRole("button", { name: "髪カテゴリをドラッグ", exact: true });
+  const targetHandle = page.getByRole("button", { name: "身分カテゴリをドラッグ", exact: true });
+  const sourceBox = await source.boundingBox();
+  const targetBox = await targetHandle.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("Category drag controls are not visible");
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2 - 8, sourceBox.y + sourceBox.height / 2, {
+    steps: 3,
+  });
+  await expect(page.locator(".drag-overlay.category")).toBeVisible();
+  const pointerX = targetBox.x + targetBox.width / 2;
+  const pointerY = targetBox.y + targetBox.height / 2;
+  await page.mouse.move(pointerX, pointerY, { steps: 8 });
+
+  const overlay = page.locator(".drag-overlay.category");
+  const overlayBox = await overlay.boundingBox();
+  if (!overlayBox) throw new Error("Category drag preview is not visible");
+  expect(Math.abs(overlayBox.x + overlayBox.width / 2 - pointerX)).toBeLessThan(4);
+  expect(Math.abs(overlayBox.y + overlayBox.height / 2 - pointerY)).toBeLessThan(4);
+  await expect(targetHandle.locator("xpath=ancestor::*[contains(@class, 'category-row')]")).toHaveClass(
+    /is-drop-before/u,
+  );
+  await page.screenshot({ path: testInfo.outputPath("category-drag.png"), animations: "disabled" });
+  await page.mouse.up();
+  await expect(page.getByLabel("髪：変更済み")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("category-changed.png"), animations: "disabled" });
 });

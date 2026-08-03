@@ -27,6 +27,7 @@ export function PreviewDialog({ open, fileName, summary, issues, onClose, onExpo
           <div>
             <h2 id="preview-title">変更プレビュー</h2>
             <p>{fileName}</p>
+            <p className="safe-export-note">元のファイルは変更せず、上記の別名で新規保存します。</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="閉じる">
             <X />

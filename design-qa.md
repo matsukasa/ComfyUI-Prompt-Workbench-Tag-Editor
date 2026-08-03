@@ -15,11 +15,11 @@
 
 ## Comparison
 
-The reference and implementation screenshots were inspected together at their native sizes. The implementation preserves the reference's dark ComfyUI-like base, left hierarchy tree, dense small-category lanes, top file/history/search controls, bottom bulk-action dock, semantic purple/cyan/amber/coral accents, and visible drag handles.
+The reference and implementation screenshots were inspected together at their native sizes. The implementation preserves the reference's dark ComfyUI-like base, left hierarchy tree, dense small-category lanes, top file/history/search controls, semantic lane colors, orange interaction accents, and visible drag handles. The ambiguous bottom bulk-action dock was intentionally removed.
 
 Intentional differences:
 
-- The reference illustrates four lanes. The actual catalog's initially selected medium category contains three small categories, so the production screenshot shows three lanes; the implementation supports up to four lanes.
+- The reference illustrates four lanes. The implementation keeps four lanes in the desktop viewport, renders every small category, and exposes additional lanes through native horizontal scrolling and explicit previous/next controls. The production screenshot uses the actual 23-lane `身につける物` category after one horizontal move.
 - The reference freezes a drag-in-progress state with arrows and a drop zone. The implementation shows those affordances only during a real drag so the resting UI stays readable.
 - The implementation uses slightly quieter surface fills than the concept while retaining saturated borders, headers, badges, selection states, and feedback colors for legibility with real data.
 
@@ -37,7 +37,8 @@ No additional crop was required. The important hierarchy tree, lane headers, tag
 ## Comparison history
 
 1. Compared the concept against the minimal sample catalog. Visual structure and color semantics matched, but the sample was too sparse for a meaningful density check.
-2. Re-captured with the actual bundled catalog at 1440 × 1024 and compared again. Dense rows, scrolling regions, hierarchy depth, and the fixed bottom dock remained aligned and uncropped.
+2. Re-captured with the actual bundled catalog at 1440 × 1024 and compared again. Dense rows, scrolling regions, hierarchy depth, and the dock-free work area remained aligned and uncropped.
+3. Re-captured the actual 23-lane category after horizontal navigation. Four full lanes and the next lane edge remain visible, while the lane count and directional controls make the additional content discoverable.
 
 ## Final result
 

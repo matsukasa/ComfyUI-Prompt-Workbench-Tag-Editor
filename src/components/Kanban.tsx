@@ -1,6 +1,6 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, GripVertical, MoreVertical, Search } from "lucide-react";
+import { Check, CirclePlus, GripVertical, MoreVertical, Move, PencilLine, Search } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useRef } from "react";
 import type { CategoryNode, TagOccurrence } from "../domain/types";
@@ -9,12 +9,13 @@ interface TagRowProps {
   tag: TagOccurrence;
   selected: boolean;
   duplicateCount: number;
+  changeLabel?: string;
   visibleIds: string[];
   onSelect: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   onEdit: (tag: TagOccurrence) => void;
 }
 
-function TagRow({ tag, selected, duplicateCount, visibleIds, onSelect, onEdit }: TagRowProps) {
+function TagRow({ tag, selected, duplicateCount, changeLabel, visibleIds, onSelect, onEdit }: TagRowProps) {
   const draggable = useDraggable({
     id: `tag:${tag.uid}`,
     data: { type: "tag", tagId: tag.uid, categoryId: tag.categoryId },
@@ -30,7 +31,7 @@ function TagRow({ tag, selected, duplicateCount, visibleIds, onSelect, onEdit }:
   return (
     <div
       ref={setNodeRef}
-      className={`tag-row ${selected ? "is-selected" : ""} ${droppable.isOver ? "is-drop-before" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
+      className={`tag-row ${selected ? "is-selected" : ""} ${changeLabel ? "is-modified" : ""} ${droppable.isOver ? "is-drop-before" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
       style={{ transform: CSS.Translate.toString(draggable.transform) }}
       role="option"
       aria-selected={selected}
@@ -52,7 +53,6 @@ function TagRow({ tag, selected, duplicateCount, visibleIds, onSelect, onEdit }:
           );
         }
       }}
-      onDoubleClick={() => onEdit(tag)}
       data-tag-id={tag.uid}
     >
       <button
@@ -66,13 +66,34 @@ function TagRow({ tag, selected, duplicateCount, visibleIds, onSelect, onEdit }:
       >
         {selected && <Check />}
       </button>
-      <span className="tag-prompt" title={tag.prompt}>
+      <span
+        className="tag-prompt"
+        title={tag.prompt}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          onEdit(tag);
+        }}
+      >
         {tag.prompt}
       </span>
       <span className="tag-translation" title={tag.translationJa}>
         {tag.translationJa || "—"}
       </span>
       {duplicateCount > 1 && <span className="duplicate-badge">{duplicateCount}か所</span>}
+      <span
+        className="change-indicator"
+        title={changeLabel}
+        aria-label={changeLabel ? `${tag.prompt}：${changeLabel}` : undefined}
+      >
+        {changeLabel &&
+          (changeLabel.includes("追加") ? (
+            <CirclePlus />
+          ) : changeLabel.includes("移動") ? (
+            <Move />
+          ) : (
+            <PencilLine />
+          ))}
+      </span>
       <button
         className="drag-handle"
         type="button"
@@ -81,17 +102,6 @@ function TagRow({ tag, selected, duplicateCount, visibleIds, onSelect, onEdit }:
         {...draggable.listeners}
       >
         <GripVertical />
-      </button>
-      <button
-        className="row-menu"
-        type="button"
-        aria-label={`${tag.prompt}を編集`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onEdit(tag);
-        }}
-      >
-        <MoreVertical />
       </button>
     </div>
   );
@@ -102,6 +112,7 @@ interface LaneProps {
   tags: TagOccurrence[];
   selectedIds: Set<string>;
   duplicateCounts: Map<string, number>;
+  changeLabels: Map<string, string>;
   laneIndex: number;
   query: string;
   showDuplicatesOnly: boolean;
@@ -187,6 +198,7 @@ export function KanbanLane(props: LaneProps) {
               tag={tag}
               selected={props.selectedIds.has(tag.uid)}
               duplicateCount={props.duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0}
+              changeLabel={props.changeLabels.get(tag.uid)}
               visibleIds={visibleIds}
               onSelect={props.onSelect}
               onEdit={props.onEdit}
@@ -210,6 +222,7 @@ export function KanbanLane(props: LaneProps) {
                     tag={tag}
                     selected={props.selectedIds.has(tag.uid)}
                     duplicateCount={props.duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0}
+                    changeLabel={props.changeLabels.get(tag.uid)}
                     visibleIds={visibleIds}
                     onSelect={props.onSelect}
                     onEdit={props.onEdit}

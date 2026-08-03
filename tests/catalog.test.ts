@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { outputFileName, parseCatalogText, serializeCatalog, validateCatalog } from "../src/domain/catalog";
+import {
+  isSafeOutputFileName,
+  outputFileName,
+  parseCatalogText,
+  serializeCatalog,
+  validateCatalog,
+} from "../src/domain/catalog";
 import {
   addCategory,
   addTags,
+  changeCategoryLevel,
   deleteCategory,
   moveCategory,
   moveTags,
@@ -93,6 +100,40 @@ describe("catalog operations", () => {
     expect(() => moveCategory(document, "major-a", "small-c")).toThrow(/大分類/u);
   });
 
+  it("changes empty major and medium levels and blocks categories with children", () => {
+    let document = parseCatalogText(bundled);
+    document = addCategory(document, "major", "", "空の大分類");
+    const emptyMajor = document.categories.find((item) => item.labelJa === "空の大分類")!;
+    document = addCategory(document, "medium", "major-a", "空の中分類");
+    const emptyMedium = document.categories.find((item) => item.labelJa === "空の中分類")!;
+
+    const promoted = changeCategoryLevel(document, emptyMedium.id, "major");
+    expect(promoted.categories.find((item) => item.id === emptyMedium.id)).toMatchObject({
+      level: "major",
+      parentId: "",
+    });
+
+    const demoted = changeCategoryLevel(document, emptyMajor.id, "medium", "major-a");
+    expect(demoted.categories.find((item) => item.id === emptyMajor.id)).toMatchObject({
+      level: "medium",
+      parentId: "major-a",
+    });
+
+    expect(() => changeCategoryLevel(document, "medium-a", "major")).toThrow(/先に子分類/u);
+    expect(() => changeCategoryLevel(document, "major-a", "medium", "major-b")).toThrow(/先に子分類/u);
+  });
+
+  it("demotes an empty major by dropping it on a medium category", () => {
+    let document = parseCatalogText(bundled);
+    document = addCategory(document, "major", "", "ドラッグ対象");
+    const active = document.categories.find((item) => item.labelJa === "ドラッグ対象")!;
+    const moved = moveCategory(document, active.id, "medium-a");
+    expect(moved.categories.find((item) => item.id === active.id)).toMatchObject({
+      level: "medium",
+      parentId: "major-a",
+    });
+  });
+
   it("adds, renames and safely deletes categories and tags", () => {
     let document = parseCatalogText(bundled);
     document = addCategory(document, "small", "medium-b", "追加先");
@@ -115,7 +156,10 @@ describe("catalog operations", () => {
 });
 
 it("creates a safe timestamped output name", () => {
-  expect(outputFileName("tags.json", new Date(2026, 7, 3, 1, 30, 0))).toBe(
-    "tags_edited_20260803_013000.json",
-  );
+  const output = outputFileName("tags.json", new Date(2026, 7, 3, 1, 30, 0));
+  expect(output).toBe("tags_edited_20260803_013000.json");
+  expect(isSafeOutputFileName("tags.json", output)).toBe(true);
+  expect(isSafeOutputFileName("tag_catalog.json", "tag_catalog.json")).toBe(false);
+  expect(isSafeOutputFileName("renamed.json", "tag_catalog.json")).toBe(false);
+  expect(isSafeOutputFileName("tags.json", "tags.json")).toBe(false);
 });

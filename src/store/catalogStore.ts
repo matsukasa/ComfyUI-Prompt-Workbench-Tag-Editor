@@ -3,6 +3,7 @@ import { comparableCatalog } from "../domain/catalog";
 import {
   addCategory,
   addTags,
+  changeCategoryLevel,
   deleteCategory,
   deleteTags,
   moveCategory,
@@ -18,6 +19,8 @@ interface StoreState {
   history: CatalogDocument[];
   future: CatalogDocument[];
   selectedTagIds: string[];
+  touchedTagIds: string[];
+  touchedCategoryIds: string[];
   anchorTagId: string | null;
   selectedMediumId: string | null;
   expandedCategoryIds: string[];
@@ -40,6 +43,7 @@ interface StoreState {
   clearSelection: () => void;
   applyTagMove: (targetCategoryId: string, beforeUid?: string) => void;
   applyCategoryMove: (activeId: string, overId: string) => void;
+  applyCategoryLevelChange: (id: string, targetLevel: "major" | "medium", parentId?: string) => void;
   editTag: (uid: string, prompt: string, translationJa: string) => void;
   createTags: (categoryId: string, values: string[]) => void;
   removeSelectedTags: () => void;
@@ -81,6 +85,8 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
   history: [],
   future: [],
   selectedTagIds: [],
+  touchedTagIds: [],
+  touchedCategoryIds: [],
   anchorTagId: null,
   selectedMediumId: null,
   expandedCategoryIds: [],
@@ -96,6 +102,8 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
       history: [],
       future: [],
       selectedTagIds: [],
+      touchedTagIds: [],
+      touchedCategoryIds: [],
       anchorTagId: null,
       selectedMediumId: firstMedium(document),
       expandedCategoryIds: document.categories
@@ -148,11 +156,20 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
   applyTagMove: (targetCategoryId, beforeUid) => {
     const selected = get().selectedTagIds;
     mutate(set, (document) => moveTags(document, selected, targetCategoryId, beforeUid));
+    set((state) => ({ touchedTagIds: [...new Set([...state.touchedTagIds, ...selected])] }));
   },
-  applyCategoryMove: (activeId, overId) =>
-    mutate(set, (document) => moveCategory(document, activeId, overId)),
-  editTag: (uid, prompt, translationJa) =>
-    mutate(set, (document) => renameTag(document, uid, prompt, translationJa)),
+  applyCategoryMove: (activeId, overId) => {
+    mutate(set, (document) => moveCategory(document, activeId, overId));
+    set((state) => ({ touchedCategoryIds: [...new Set([...state.touchedCategoryIds, activeId])] }));
+  },
+  applyCategoryLevelChange: (id, targetLevel, parentId) => {
+    mutate(set, (document) => changeCategoryLevel(document, id, targetLevel, parentId));
+    set((state) => ({ touchedCategoryIds: [...new Set([...state.touchedCategoryIds, id])] }));
+  },
+  editTag: (uid, prompt, translationJa) => {
+    mutate(set, (document) => renameTag(document, uid, prompt, translationJa));
+    set((state) => ({ touchedTagIds: [...new Set([...state.touchedTagIds, uid])] }));
+  },
   createTags: (categoryId, values) => mutate(set, (document) => addTags(document, categoryId, values)),
   removeSelectedTags: () => {
     const selected = get().selectedTagIds;
@@ -161,8 +178,10 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
   },
   createCategory: (level, parentId, labelJa) =>
     mutate(set, (document) => addCategory(document, level, parentId, labelJa)),
-  editCategory: (id, labelJa, labelEn) =>
-    mutate(set, (document) => renameCategory(document, id, labelJa, labelEn)),
+  editCategory: (id, labelJa, labelEn) => {
+    mutate(set, (document) => renameCategory(document, id, labelJa, labelEn));
+    set((state) => ({ touchedCategoryIds: [...new Set([...state.touchedCategoryIds, id])] }));
+  },
   removeCategory: (id, destinationId, deleteTagsToo) =>
     mutate(set, (document) => deleteCategory(document, id, destinationId, deleteTagsToo)),
   undo: () =>
@@ -197,6 +216,8 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
             history: state.document ? [...state.history, state.document].slice(-100) : [],
             future: [],
             selectedTagIds: [],
+            touchedTagIds: [],
+            touchedCategoryIds: [],
             error: null,
           }
         : {},

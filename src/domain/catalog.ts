@@ -366,6 +366,21 @@ export function duplicateMap(tags: TagOccurrence[]): Map<string, TagOccurrence[]
   return result;
 }
 
+export const DEFAULT_CATALOG_FILE_NAME = "tag_catalog.json";
+
+function normalizedFileName(fileName: string): string {
+  return fileName.replaceAll("\\", "/").split("/").pop()?.toLocaleLowerCase() ?? "";
+}
+
+export function isSafeOutputFileName(sourceFileName: string, outputName: string): boolean {
+  const normalizedOutput = normalizedFileName(outputName);
+  return (
+    normalizedOutput.length > 0 &&
+    normalizedOutput !== normalizedFileName(sourceFileName) &&
+    normalizedOutput !== DEFAULT_CATALOG_FILE_NAME
+  );
+}
+
 export function outputFileName(fileName: string, now = new Date()): string {
   const base = fileName.replace(/\.json$/iu, "") || "catalog";
   const part = (value: number) => String(value).padStart(2, "0");

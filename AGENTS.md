@@ -3,10 +3,17 @@
 ## Design Context
 
 - Visual target: the selected colorful Category Kanban mockup generated in this project session.
-- Keep the dense dark ComfyUI base, four color-coded small-category lanes, colored hierarchy branches, left drag navigator, and persistent bottom selection dock.
+- Keep the dense dark ComfyUI base, four color-coded small-category lanes, colored hierarchy branches, and left drag navigator. Do not restore the removed bottom selection dock.
 - Tags may move across major and medium branches by auto-expanding the tree and dropping on a final small category.
-- Category drag rules are level-safe: major reorders with major; medium can change major parent; small can change medium parent.
+- Category drag rules are level-safe: major reorders with major and can become medium by dropping on a medium row; medium can change major parent and can become major through the dedicated root drop zone; small can change medium parent. Major/medium level conversion is allowed only when the dragged category has no children, otherwise show an error asking the user to move children first.
 - Color always has a redundant icon, label, outline, checkbox, or shape cue.
+- Show every small-category lane. Keep four lanes visible at the desktop reference width and make additional lanes reachable with native horizontal scrolling plus explicit left/right controls.
+- Use orange as the primary accent for focus, selection, active filters, and primary actions while retaining category-specific lane colors.
+- Do not add a bottom destination selector, bulk move controls, selected-only control, or delete strip.
+- Edit major and medium category names by double-clicking their labels.
+- Tag selection controls must remain compact square checkboxes. Edit a tag by double-clicking the tag name; do not add a per-row edit menu or instructional copy for this gesture.
+- Keep moved, reordered, renamed, and newly added items visually distinguishable from the loaded baseline with a subtle orange tint plus a redundant change icon. Category drag previews must stay centered on the pointer, and major/medium destinations must use exact insertion lines instead of whole-row hover boxes.
+- Never overwrite `tag_catalog.json` or the currently loaded source file. Every export must use a distinct generated filename.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 

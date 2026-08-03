@@ -3,17 +3,22 @@ import {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
+  type Modifier,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import { getEventCoordinates } from "@dnd-kit/utilities";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   FileJson,
   Filter,
@@ -32,21 +37,36 @@ import { KanbanLane } from "./components/Kanban";
 import { PreviewDialog } from "./components/PreviewDialog";
 import {
   duplicateMap,
+  isSafeOutputFileName,
   outputFileName,
   parseCatalogFile,
   serializeCatalog,
   summarizeChanges,
   validateCatalog,
 } from "./domain/catalog";
-import { categoryPath, sortedChildren } from "./domain/operations";
-import type { CategoryLevel, TagOccurrence } from "./domain/types";
+import { sortedChildren } from "./domain/operations";
+import type { CategoryLevel, CategoryNode, TagOccurrence } from "./domain/types";
 import { demoDocument } from "./demoCatalog";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
+
+const snapOverlayCenterToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
+  if (!activatorEvent || !draggingNodeRect) return transform;
+  const coordinates = getEventCoordinates(activatorEvent);
+  if (!coordinates) return transform;
+  return {
+    ...transform,
+    x: transform.x + coordinates.x - draggingNodeRect.left - draggingNodeRect.width / 2,
+    y: transform.y + coordinates.y - draggingNodeRect.top - draggingNodeRect.height / 2,
+  };
+};
 
 function downloadFile(
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
   name: string,
 ): void {
+  if (!isSafeOutputFileName(document.fileName, name)) {
+    throw new Error("元のカタログとは異なる安全なファイル名を指定してください。");
+  }
   const blob = new Blob([serializeCatalog(document)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = window.document.createElement("a");
@@ -80,12 +100,12 @@ function useKeyboardShortcuts(): void {
 export function App() {
   const store = useCatalogStore();
   const fileInput = useRef<HTMLInputElement>(null);
+  const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [activeDrag, setActiveDrag] = useState<{ type: "tag" | "category"; id: string } | null>(null);
   const [overCategoryId, setOverCategoryId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [destinationId, setDestinationId] = useState("");
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -120,6 +140,49 @@ export function App() {
     () => new Map([...duplicates].map(([key, value]) => [key, value.length])),
     [duplicates],
   );
+  const tagChangeLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    if (!document || !baseline) return labels;
+    const beforeTags = new Map(baseline.tags.map((tag) => [tag.uid, tag]));
+    const touched = new Set(store.touchedTagIds);
+    for (const tag of document.tags) {
+      const before = beforeTags.get(tag.uid);
+      if (!before) {
+        labels.set(tag.uid, "追加済み");
+        continue;
+      }
+      if (!touched.has(tag.uid)) continue;
+      const changes: string[] = [];
+      if (before.categoryId !== tag.categoryId || before.order !== tag.order) changes.push("移動済み");
+      if (before.prompt !== tag.prompt || before.translationJa !== tag.translationJa)
+        changes.push("編集済み");
+      if (changes.length) labels.set(tag.uid, changes.join("・"));
+    }
+    return labels;
+  }, [baseline, document, store.touchedTagIds]);
+  const changedCategoryIds = useMemo(() => {
+    const changed = new Set<string>();
+    if (!document || !baseline) return changed;
+    const beforeCategories = new Map(baseline.categories.map((category) => [category.id, category]));
+    const touched = new Set(store.touchedCategoryIds);
+    for (const category of document.categories) {
+      const before = beforeCategories.get(category.id);
+      if (!before) {
+        changed.add(category.id);
+        continue;
+      }
+      if (
+        touched.has(category.id) &&
+        (before.level !== category.level ||
+          before.parentId !== category.parentId ||
+          before.order !== category.order ||
+          before.labelJa !== category.labelJa ||
+          before.labelEn !== category.labelEn)
+      )
+        changed.add(category.id);
+    }
+    return changed;
+  }, [baseline, document, store.touchedCategoryIds]);
   const smallCategories = useMemo(
     () =>
       document && store.selectedMediumId
@@ -127,7 +190,6 @@ export function App() {
         : [],
     [document, store.selectedMediumId],
   );
-  const shownLanes = smallCategories.slice(0, 4);
   const issues = document ? validateCatalog(document) : [];
   const summary =
     document && baseline
@@ -151,7 +213,6 @@ export function App() {
     try {
       const parsed = await parseCatalogFile(file);
       store.load(parsed);
-      setDestinationId("");
       setToast(`${file.name} を読み込みました`);
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
@@ -159,9 +220,18 @@ export function App() {
   };
   const onExport = () => {
     if (issues.some((issue) => issue.severity === "error")) return;
-    downloadFile(document, outputName);
-    setPreviewOpen(false);
-    setToast(`${outputName} を書き出しました`);
+    try {
+      downloadFile(document, outputName);
+      setPreviewOpen(false);
+      setToast(`${outputName} を書き出しました`);
+    } catch (error) {
+      store.setError(error instanceof Error ? error.message : "ファイルを書き出せませんでした。");
+    }
+  };
+  const scrollLanes = (direction: -1 | 1) => {
+    const scroller = laneScroller.current;
+    if (!scroller) return;
+    scroller.scrollBy({ left: direction * Math.max(scroller.clientWidth * 0.8, 280), behavior: "smooth" });
   };
   const onDragStart = (event: DragStartEvent) => {
     const type = event.active.data.current?.type;
@@ -190,9 +260,31 @@ export function App() {
           throw new Error("大・中分類を展開し、移動先の小分類へドロップしてください。");
         store.applyTagMove(target.id, overData.type === "tag-target" ? String(overData.tagId) : undefined);
         setToast(`${store.selectedTagIds.length || 1}件のタグを ${target.labelJa} へ移動しました`);
-      } else if (activeType === "category" && overData?.categoryId) {
-        store.applyCategoryMove(String(event.active.data.current?.categoryId), String(overData.categoryId));
-        setToast("カテゴリ階層を更新しました");
+      } else if (activeType === "category") {
+        const activeId = String(event.active.data.current?.categoryId);
+        if (overData?.type === "category-level-target" && overData.targetLevel === "major") {
+          if (document.categories.some((item) => item.parentId === activeId)) {
+            throw new Error("配下カテゴリがあります。先に子分類を別の分類へ移動してください。");
+          }
+          store.applyCategoryLevelChange(activeId, "major");
+          setToast("中分類を大分類へ変更しました");
+        } else if (overData?.categoryId) {
+          const activeCategory = document.categories.find((item) => item.id === activeId);
+          const overCategory = document.categories.find((item) => item.id === overData.categoryId);
+          if (
+            activeCategory?.level === "major" &&
+            overCategory?.level === "medium" &&
+            document.categories.some((item) => item.parentId === activeId)
+          ) {
+            throw new Error("配下カテゴリがあります。先に子分類を別の分類へ移動してください。");
+          }
+          store.applyCategoryMove(activeId, String(overData.categoryId));
+          setToast(
+            activeCategory?.level === "major" && overCategory?.level === "medium"
+              ? "大分類を中分類へ変更しました"
+              : "カテゴリ階層を更新しました",
+          );
+        }
       }
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "移動できませんでした。");
@@ -206,6 +298,13 @@ export function App() {
     const ja = window.prompt("日本語訳を編集", tag.translationJa);
     if (ja === null) return;
     store.editTag(tag.uid, prompt, ja);
+  };
+  const editCategory = (category: CategoryNode) => {
+    const labelJa = window.prompt("カテゴリ名を編集", category.labelJa);
+    if (labelJa === null) return;
+    const labelEn = window.prompt("英語名を編集", category.labelEn);
+    if (labelEn === null) return;
+    store.editCategory(category.id, labelJa, labelEn);
   };
   const addTags = (categoryId: string) => {
     const input = window.prompt("追加するタグを改行またはカンマ区切りで入力してください。");
@@ -231,11 +330,7 @@ export function App() {
     if (name) store.createCategory(level, parentId, name);
   };
 
-  const allSmall = document.categories
-    .filter((category) => category.level === "small")
-    .sort((a, b) => a.order - b.order);
   const selectedTags = document.tags.filter((tag) => selected.has(tag.uid));
-  const destinationPath = destinationId ? categoryPath(document.categories, destinationId) : [];
   return (
     <div className={`app-shell theme-${theme}`}>
       <header className="app-toolbar">
@@ -303,6 +398,7 @@ export function App() {
       </header>
       <DndContext
         sensors={sensors}
+        collisionDetection={pointerWithin}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
@@ -319,10 +415,18 @@ export function App() {
             selectedMediumId={store.selectedMediumId}
             query={store.categoryQuery}
             dragMode={activeDrag?.type ?? null}
+            activeCategoryLevel={
+              activeDrag?.type === "category"
+                ? (document.categories.find((item) => item.id === activeDrag.id)?.level ?? null)
+                : null
+            }
+            activeCategoryId={activeDrag?.type === "category" ? activeDrag.id : null}
             overCategoryId={overCategoryId}
+            changedCategoryIds={changedCategoryIds}
             onQuery={store.setCategoryQuery}
             onToggle={store.toggleExpanded}
             onSelectMedium={store.setSelectedMedium}
+            onEditCategory={editCategory}
             onAddCategory={addCategory}
             onExpandAll={store.expandAll}
           />
@@ -355,16 +459,33 @@ export function App() {
               <span className="workspace-status">
                 {document.tags.length.toLocaleString()} タグ / {document.categories.length} カテゴリ
               </span>
+              {smallCategories.length > 4 && (
+                <div className="lane-navigation" aria-label="小分類レーンの横移動">
+                  <span>小分類 {smallCategories.length}件</span>
+                  <button type="button" onClick={() => scrollLanes(-1)} aria-label="小分類を左へスクロール">
+                    <ChevronLeft />
+                  </button>
+                  <button type="button" onClick={() => scrollLanes(1)} aria-label="小分類を右へスクロール">
+                    <ChevronRight />
+                  </button>
+                </div>
+              )}
             </div>
-            {shownLanes.length ? (
-              <div className="kanban-grid">
-                {shownLanes.map((category, index) => (
+            {smallCategories.length ? (
+              <div
+                ref={laneScroller}
+                className="kanban-grid"
+                tabIndex={0}
+                aria-label={`${smallCategories.length}件の小分類レーン。横方向にスクロールできます`}
+              >
+                {smallCategories.map((category, index) => (
                   <KanbanLane
                     key={category.id}
                     category={category}
                     tags={document.tags.filter((tag) => tag.categoryId === category.id)}
                     selectedIds={selected}
                     duplicateCounts={duplicateCounts}
+                    changeLabels={tagChangeLabels}
                     laneIndex={index}
                     query={store.globalQuery}
                     showDuplicatesOnly={store.showDuplicatesOnly}
@@ -384,13 +505,17 @@ export function App() {
             )}
           </main>
         </div>
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay
+          dropAnimation={null}
+          modifiers={activeDrag?.type === "category" ? [snapOverlayCenterToCursor] : undefined}
+        >
           {activeDrag && (
             <div className={`drag-overlay ${activeDrag.type}`}>
               <strong>
                 {activeDrag.type === "tag"
                   ? `${Math.max(store.selectedTagIds.length, 1)}件を移動`
-                  : "カテゴリを移動"}
+                  : (document.categories.find((item) => item.id === activeDrag.id)?.labelJa ??
+                    "カテゴリを移動")}
               </strong>
               {activeDrag.type === "tag" &&
                 selectedTags.slice(0, 4).map((tag) => <span key={tag.uid}>{tag.prompt}</span>)}
@@ -398,75 +523,6 @@ export function App() {
           )}
         </DragOverlay>
       </DndContext>
-      <footer className="selection-dock">
-        <div className="selection-count">
-          <strong>{store.selectedTagIds.length}件を選択中</strong>
-          <button type="button" onClick={store.clearSelection}>
-            選択を解除
-          </button>
-        </div>
-        <label className="destination-select">
-          移動先：
-          <select value={destinationId} onChange={(event) => setDestinationId(event.target.value)}>
-            <option value="">小分類を選択</option>
-            {allSmall.map((category) => (
-              <option value={category.id} key={category.id}>
-                {categoryPath(document.categories, category.id)
-                  .map((item) => item.labelJa)
-                  .join(" > ")}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="destination-path">
-          {destinationPath.map((category) => (
-            <span className={`path-chip level-${category.level}`} key={category.id}>
-              {category.labelJa}
-            </span>
-          ))}
-        </div>
-        <button
-          type="button"
-          disabled={!destinationId || !selected.size}
-          onClick={() => {
-            store.applyTagMove(destinationId);
-            setToast("選択タグを先頭へ移動しました");
-          }}
-        >
-          ↑ 先頭へ移動
-        </button>
-        <button
-          type="button"
-          disabled={!destinationId || !selected.size}
-          onClick={() => {
-            store.applyTagMove(destinationId);
-            setToast("選択タグを末尾へ移動しました");
-          }}
-        >
-          ↓ 末尾へ移動
-        </button>
-        <button
-          type="button"
-          className={store.showSelectedOnly ? "is-active" : ""}
-          onClick={() => store.setSelectedFilter(!store.showSelectedOnly)}
-        >
-          選択中のみ
-        </button>
-        <button
-          type="button"
-          className="danger-button"
-          disabled={!selected.size}
-          onClick={() => {
-            if (window.confirm(`${selected.size}件のタグを削除しますか？`)) store.removeSelectedTags();
-          }}
-        >
-          削除
-        </button>
-        <button className="preview-button" type="button" onClick={() => setPreviewOpen(true)}>
-          <CheckCircle2 />
-          差分を確認
-        </button>
-      </footer>
       {store.error && (
         <div className="error-toast" role="alert">
           <AlertTriangle />
