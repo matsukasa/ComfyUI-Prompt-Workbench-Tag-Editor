@@ -1,0 +1,23 @@
+{
+  "schema": "prompt-workbench/tag-catalog",
+  "version": 1,
+  "metadata": {
+    "purpose": "Structure-only test data",
+    "unknown_field_must_survive": true
+  },
+  "categories": [
+    { "id": "major-a", "level": "major", "parentId": "", "en": "Person", "ja": "人物" },
+    { "id": "medium-a", "level": "medium", "parentId": "major-a", "en": "Hair", "ja": "髪" },
+    { "id": "small-a", "level": "small", "parentId": "medium-a", "en": "Style", "ja": "髪型" },
+    { "id": "small-b", "level": "small", "parentId": "medium-a", "en": "Color", "ja": "髪の色" },
+    { "id": "major-b", "level": "major", "parentId": "", "en": "Clothing", "ja": "服装" },
+    { "id": "medium-b", "level": "medium", "parentId": "major-b", "en": "Accessories", "ja": "アクセサリー" },
+    { "id": "small-c", "level": "small", "parentId": "medium-b", "en": "Hair accessories", "ja": "髪飾り" }
+  ],
+  "tags": [
+    { "id": "tag-1", "categoryId": "small-a", "prompt": "one", "ja": "一", "order": 0, "unknown": "keep" },
+    { "id": "tag-2", "categoryId": "small-a", "prompt": "two", "ja": "二", "order": 1 },
+    { "id": "tag-3", "categoryId": "small-b", "prompt": "three", "ja": "三", "order": 0 },
+    { "id": "tag-4", "categoryId": "small-c", "prompt": "ribbon", "ja": "リボン", "order": 0 }
+  ]
+}

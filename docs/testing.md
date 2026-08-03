@@ -1,0 +1,27 @@
+# テスト
+
+## 自動テスト
+
+```powershell
+npm run typecheck
+npm run lint
+npm run format:check
+npm run test
+npm run test:e2e
+npm run build
+npm run test:sites
+```
+
+Vitestはパース、シリアライズ、未知フィールド、改行・BOM、移動順、カテゴリ親変更、追加・編集・削除、重複、検証、出力名、100件履歴、Ctrl／Shift選択、検索、差分ダイアログを検証する。
+
+Playwrightはサンプル読込、複数選択、別の大分類配下へのドラッグ、Undo、Redo、ダウンロード、再読込、元サンプルのSHA-256不変を検証する。
+
+## 手動確認
+
+- 1440×1024で4列と下部操作が隠れない。
+- 狭い画面で横スクロールまたは縦積みへ安全に退避する。
+- ドラッグ中に大・中分類が展開され、小分類だけが最終ドロップ先になる。
+- カテゴリ専用ハンドルとタグハンドルを混同しない。
+- ライト／ダーク、キーボードフォーカス、reduced-motionを確認する。
+- コンソールにReact、dnd-kit、アクセシビリティエラーがない。
+- 実際の同梱 `tag_catalog.json` を読み、書き出したJSONを再読込できる。
