@@ -44,17 +44,25 @@ it("renders every small category and provides horizontal lane controls", async (
   expect(screen.getByRole("button", { name: "小分類を右へスクロール" })).toBeInTheDocument();
 });
 
-it("edits a tag by double-clicking its name without a row menu", async () => {
-  const prompt = vi
-    .spyOn(window, "prompt")
-    .mockReturnValueOnce("long_hair_edited")
-    .mockReturnValueOnce("ロングヘア編集");
+it("edits a tag and its translation directly in the row without a dialog", async () => {
+  const user = userEvent.setup();
+  const prompt = vi.spyOn(window, "prompt");
   render(<App />);
   fireEvent.doubleClick(await screen.findByText("long_hair"));
-  expect(prompt).toHaveBeenCalledTimes(2);
+  const nameInput = screen.getByRole("textbox", { name: "long_hairのタグ名" });
+  const translationInput = screen.getByRole("textbox", { name: "long_hairの日本語訳" });
+  await user.clear(nameInput);
+  await user.type(nameInput, "long_hair_edited");
+  await user.clear(translationInput);
+  await user.type(translationInput, "ロングヘア編集");
+  await user.click(screen.getByRole("button", { name: "long_hairの変更を保存" }));
+  expect(prompt).not.toHaveBeenCalled();
   expect(useCatalogStore.getState().document!.tags.some((tag) => tag.prompt === "long_hair_edited")).toBe(
     true,
   );
+  expect(
+    useCatalogStore.getState().document!.tags.some((tag) => tag.translationJa === "ロングヘア編集"),
+  ).toBe(true);
   expect(screen.queryByRole("button", { name: "long_hairを編集" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("long_hair_edited：編集済み")).toBeInTheDocument();
 });
@@ -97,6 +105,11 @@ it("removes the ambiguous bottom selection dock", () => {
   expect(container.querySelector(".selection-dock")).not.toBeInTheDocument();
 });
 
+it("labels the file picker as a tag settings file action", () => {
+  render(<App />);
+  expect(screen.getByRole("button", { name: "タグ設定ファイルを開く" })).toBeInTheDocument();
+});
+
 it("supports ctrl-click and shift-click selection", async () => {
   const user = userEvent.setup();
   render(<App />);
@@ -109,6 +122,16 @@ it("supports ctrl-click and shift-click selection", async () => {
   expect(useCatalogStore.getState().selectedTagIds).toHaveLength(2);
   fireEvent.click(screen.getByText("ponytail"), { shiftKey: true });
   expect(useCatalogStore.getState().selectedTagIds).toHaveLength(2);
+});
+
+it("focuses the lane containing the most recently selected tag", async () => {
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(await screen.findByText("long_hair"));
+  const focusedLane = screen.getByRole("heading", { name: "髪型" }).closest(".kanban-lane");
+  expect(container.querySelector(".kanban-grid")).toHaveClass("has-focus");
+  expect(focusedLane).toHaveClass("is-focused");
+  expect(container.querySelectorAll(".kanban-lane.is-deemphasized")).toHaveLength(3);
 });
 
 it("filters tags without changing underlying data", async () => {

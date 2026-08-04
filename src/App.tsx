@@ -7,6 +7,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
   type Modifier,
@@ -60,6 +61,18 @@ const snapOverlayCenterToCursor: Modifier = ({ activatorEvent, draggingNodeRect,
   };
 };
 
+interface ToastState {
+  message: string;
+  detail?: string;
+  undoable?: boolean;
+}
+
+interface TrailVector {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
 function downloadFile(
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
   name: string,
@@ -105,7 +118,15 @@ export function App() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [activeDrag, setActiveDrag] = useState<{ type: "tag" | "category"; id: string } | null>(null);
   const [overCategoryId, setOverCategoryId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [overTreeCategoryId, setOverTreeCategoryId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [trailVector, setTrailVector] = useState<TrailVector>({ x: 0, y: 0, visible: false });
+  const [recentlyMovedTagIds, setRecentlyMovedTagIds] = useState<string[]>([]);
+  const previousDragDelta = useRef({ x: 0, y: 0 });
+  const pendingTrailVector = useRef({ x: 0, y: 0 });
+  const trailFrame = useRef<number | null>(null);
+  const trailTimer = useRef<number | null>(null);
+  const recentMoveTimer = useRef<number | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -128,9 +149,17 @@ export function App() {
   }, [dirty]);
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 2800);
+    const timer = window.setTimeout(() => setToast(null), toast.undoable ? 4000 : 2800);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  useEffect(
+    () => () => {
+      if (trailFrame.current !== null) window.cancelAnimationFrame(trailFrame.current);
+      if (trailTimer.current !== null) window.clearTimeout(trailTimer.current);
+      if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
+    },
+    [],
+  );
 
   const document = store.document;
   const baseline = store.baseline;
@@ -203,6 +232,17 @@ export function App() {
           duplicateDelta: 0,
         };
   const outputName = document ? outputFileName(document.fileName) : "catalog_edited.json";
+  const focusedCategoryId = useMemo(() => {
+    const tagId = activeDrag?.type === "tag" ? activeDrag.id : store.anchorTagId;
+    return tagId ? (document?.tags.find((tag) => tag.uid === tagId)?.categoryId ?? null) : null;
+  }, [activeDrag, document, store.anchorTagId]);
+  const recentlyMoved = useMemo(() => new Set(recentlyMovedTagIds), [recentlyMovedTagIds]);
+  const validTagTarget = useMemo(() => {
+    if (activeDrag?.type !== "tag" || !overCategoryId || !document) return false;
+    return document.categories.some(
+      (category) => category.id === overCategoryId && category.level === "small",
+    );
+  }, [activeDrag, document, overCategoryId]);
 
   if (!document || !baseline) return <main className="loading-screen">カタログを準備しています…</main>;
 
@@ -213,7 +253,7 @@ export function App() {
     try {
       const parsed = await parseCatalogFile(file);
       store.load(parsed);
-      setToast(`${file.name} を読み込みました`);
+      setToast({ message: `${file.name} を読み込みました` });
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
     }
@@ -223,7 +263,7 @@ export function App() {
     try {
       downloadFile(document, outputName);
       setPreviewOpen(false);
-      setToast(`${outputName} を書き出しました`);
+      setToast({ message: `${outputName} を書き出しました` });
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを書き出せませんでした。");
     }
@@ -241,10 +281,39 @@ export function App() {
         : String(event.active.data.current?.categoryId);
     if (type === "tag" && !selected.has(id)) store.selectTag(id, "single", [id]);
     if (type === "tag" || type === "category") setActiveDrag({ type, id });
+    previousDragDelta.current = { x: 0, y: 0 };
+    setTrailVector({ x: 0, y: 0, visible: false });
+  };
+  const onDragMove = (event: DragMoveEvent) => {
+    if (event.active.data.current?.type !== "tag") return;
+    const deltaX = event.delta.x - previousDragDelta.current.x;
+    const deltaY = event.delta.y - previousDragDelta.current.y;
+    previousDragDelta.current = event.delta;
+    const distance = Math.hypot(deltaX, deltaY);
+    if (distance < 0.5) return;
+    const scale = Math.min(12 / distance, 1);
+    pendingTrailVector.current = {
+      x: Math.round(-deltaX * scale),
+      y: Math.round(-deltaY * scale),
+    };
+    if (trailFrame.current === null) {
+      trailFrame.current = window.requestAnimationFrame(() => {
+        setTrailVector({ ...pendingTrailVector.current, visible: true });
+        trailFrame.current = null;
+      });
+    }
+    if (trailTimer.current !== null) window.clearTimeout(trailTimer.current);
+    trailTimer.current = window.setTimeout(
+      () => setTrailVector((current) => ({ ...current, visible: false })),
+      200,
+    );
   };
   const onDragOver = (event: DragOverEvent) => {
     const categoryId = event.over?.data.current?.categoryId as string | undefined;
     setOverCategoryId(categoryId ?? null);
+    setOverTreeCategoryId(
+      String(event.over?.id ?? "").startsWith("tree-category:") ? (categoryId ?? null) : null,
+    );
     if (activeDrag?.type === "tag" && categoryId) {
       const category = document.categories.find((item) => item.id === categoryId);
       if (category && category.level !== "small") store.toggleExpanded(category.id, true);
@@ -258,8 +327,18 @@ export function App() {
         const target = document.categories.find((item) => item.id === overData.categoryId);
         if (target?.level !== "small")
           throw new Error("大・中分類を展開し、移動先の小分類へドロップしてください。");
+        const movedTagIds = store.selectedTagIds.length
+          ? [...store.selectedTagIds]
+          : [String(event.active.data.current?.tagId)];
         store.applyTagMove(target.id, overData.type === "tag-target" ? String(overData.tagId) : undefined);
-        setToast(`${store.selectedTagIds.length || 1}件のタグを ${target.labelJa} へ移動しました`);
+        setRecentlyMovedTagIds(movedTagIds);
+        if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
+        recentMoveTimer.current = window.setTimeout(() => setRecentlyMovedTagIds([]), 600);
+        setToast({
+          message: "タグを移動しました",
+          detail: `${movedTagIds.length}件を ${target.labelJa} へ移動`,
+          undoable: true,
+        });
       } else if (activeType === "category") {
         const activeId = String(event.active.data.current?.categoryId);
         if (overData?.type === "category-level-target" && overData.targetLevel === "major") {
@@ -267,7 +346,7 @@ export function App() {
             throw new Error("配下カテゴリがあります。先に子分類を別の分類へ移動してください。");
           }
           store.applyCategoryLevelChange(activeId, "major");
-          setToast("中分類を大分類へ変更しました");
+          setToast({ message: "中分類を大分類へ変更しました" });
         } else if (overData?.categoryId) {
           const activeCategory = document.categories.find((item) => item.id === activeId);
           const overCategory = document.categories.find((item) => item.id === overData.categoryId);
@@ -279,11 +358,12 @@ export function App() {
             throw new Error("配下カテゴリがあります。先に子分類を別の分類へ移動してください。");
           }
           store.applyCategoryMove(activeId, String(overData.categoryId));
-          setToast(
-            activeCategory?.level === "major" && overCategory?.level === "medium"
-              ? "大分類を中分類へ変更しました"
-              : "カテゴリ階層を更新しました",
-          );
+          setToast({
+            message:
+              activeCategory?.level === "major" && overCategory?.level === "medium"
+                ? "大分類を中分類へ変更しました"
+                : "カテゴリ階層を更新しました",
+          });
         }
       }
     } catch (error) {
@@ -291,13 +371,17 @@ export function App() {
     }
     setActiveDrag(null);
     setOverCategoryId(null);
+    setOverTreeCategoryId(null);
+    setTrailVector((current) => ({ ...current, visible: false }));
   };
-  const editTag = (tag: TagOccurrence) => {
-    const prompt = window.prompt("タグ名を編集", tag.prompt);
-    if (prompt === null) return;
-    const ja = window.prompt("日本語訳を編集", tag.translationJa);
-    if (ja === null) return;
-    store.editTag(tag.uid, prompt, ja);
+  const cancelDrag = () => {
+    setActiveDrag(null);
+    setOverCategoryId(null);
+    setOverTreeCategoryId(null);
+    setTrailVector((current) => ({ ...current, visible: false }));
+  };
+  const editTag = (tag: TagOccurrence, prompt: string, translationJa: string) => {
+    store.editTag(tag.uid, prompt, translationJa);
   };
   const editCategory = (category: CategoryNode) => {
     const labelJa = window.prompt("カテゴリ名を編集", category.labelJa);
@@ -355,7 +439,7 @@ export function App() {
           />
           <button type="button" onClick={() => fileInput.current?.click()}>
             <FolderOpen />
-            ファイルを開く
+            タグ設定ファイルを開く
           </button>
           <button type="button" onClick={store.undo} disabled={!store.history.length} aria-label="元に戻す">
             <Undo2 />
@@ -400,12 +484,10 @@ export function App() {
         sensors={sensors}
         collisionDetection={pointerWithin}
         onDragStart={onDragStart}
+        onDragMove={onDragMove}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => {
-          setActiveDrag(null);
-          setOverCategoryId(null);
-        }}
+        onDragCancel={cancelDrag}
       >
         <div className="workspace">
           <CategoryTree
@@ -421,7 +503,7 @@ export function App() {
                 : null
             }
             activeCategoryId={activeDrag?.type === "category" ? activeDrag.id : null}
-            overCategoryId={overCategoryId}
+            overCategoryId={overTreeCategoryId}
             changedCategoryIds={changedCategoryIds}
             onQuery={store.setCategoryQuery}
             onToggle={store.toggleExpanded}
@@ -474,7 +556,7 @@ export function App() {
             {smallCategories.length ? (
               <div
                 ref={laneScroller}
-                className="kanban-grid"
+                className={`kanban-grid ${focusedCategoryId ? "has-focus" : ""}`}
                 tabIndex={0}
                 aria-label={`${smallCategories.length}件の小分類レーン。横方向にスクロールできます`}
               >
@@ -490,6 +572,10 @@ export function App() {
                     query={store.globalQuery}
                     showDuplicatesOnly={store.showDuplicatesOnly}
                     showSelectedOnly={store.showSelectedOnly}
+                    focused={category.id === focusedCategoryId}
+                    deemphasized={Boolean(focusedCategoryId && category.id !== focusedCategoryId)}
+                    dragActive={activeDrag?.type === "tag"}
+                    recentlyMovedIds={recentlyMoved}
                     onSelect={store.selectTag}
                     onSelectAll={store.selectMany}
                     onEdit={editTag}
@@ -505,12 +591,19 @@ export function App() {
             )}
           </main>
         </div>
-        <DragOverlay
-          dropAnimation={null}
-          modifiers={activeDrag?.type === "category" ? [snapOverlayCenterToCursor] : undefined}
-        >
+        <DragOverlay dropAnimation={null} modifiers={activeDrag ? [snapOverlayCenterToCursor] : undefined}>
           {activeDrag && (
-            <div className={`drag-overlay ${activeDrag.type}`}>
+            <div
+              className={`drag-overlay ${activeDrag.type} ${validTagTarget ? "is-over-target" : ""} ${trailVector.visible ? "has-trail" : ""}`}
+              style={
+                {
+                  "--trail-x": `${trailVector.x}px`,
+                  "--trail-y": `${trailVector.y}px`,
+                  "--trail-half-x": `${trailVector.x * 0.52}px`,
+                  "--trail-half-y": `${trailVector.y * 0.52}px`,
+                } as React.CSSProperties
+              }
+            >
               <strong>
                 {activeDrag.type === "tag"
                   ? `${Math.max(store.selectedTagIds.length, 1)}件を移動`
@@ -535,7 +628,22 @@ export function App() {
       {toast && (
         <div className="success-toast" role="status">
           <CheckCircle2 />
-          {toast}
+          <span>
+            <strong>{toast.message}</strong>
+            {toast.detail && <small>{toast.detail}</small>}
+          </span>
+          {toast.undoable && (
+            <button
+              type="button"
+              onClick={() => {
+                store.undo();
+                setRecentlyMovedTagIds([]);
+                setToast({ message: "移動を元に戻しました" });
+              }}
+            >
+              元に戻す
+            </button>
+          )}
         </div>
       )}
       <PreviewDialog
