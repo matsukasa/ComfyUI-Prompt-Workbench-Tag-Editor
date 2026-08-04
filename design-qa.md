@@ -25,9 +25,9 @@ The direct-edit state is intentionally different from the source drag state: dou
 - P1: none
 - P2: none
 - Layout: all four lanes remain visible at the reference width; additional lanes retain native horizontal scrolling and explicit controls.
-- Editing: tag name and Japanese translation open together in the row, save together, cancel without mutation, and reject an empty tag name.
+- Editing: tag values and major/medium/small Japanese-English labels open together in their rows, save together, cancel without mutation, and reject an empty primary name.
 - Motion: pointer-centered tag/category overlays, short tag afterimages, exact orange insertion lines, moved-row pulse, and reduced-motion fallbacks remain covered by E2E.
-- Data safety: export keeps a generated alternate filename; E2E confirms both the sample source and the real `tag_catalog.json` hash are unchanged.
+- Data safety: overwrite requires a writable picker handle and explicit confirmation; save-as retains a timestamped fallback, and E2E confirms source fixtures are unchanged.
 - Browser inspection: direct editing updated both values and closed the fields after save; the browser console previously showed no warnings or errors.
 
 ## Verification

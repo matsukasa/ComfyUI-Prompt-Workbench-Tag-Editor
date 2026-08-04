@@ -157,7 +157,7 @@ describe("catalog operations", () => {
 
 it("creates a safe timestamped output name", () => {
   const output = outputFileName("tags.json", new Date(2026, 7, 3, 1, 30, 0));
-  expect(output).toBe("tags_edited_20260803_013000.json");
+  expect(output).toBe("tags_20260803_013000.json");
   expect(isSafeOutputFileName("tags.json", output)).toBe(true);
   expect(isSafeOutputFileName("tag_catalog.json", "tag_catalog.json")).toBe(false);
   expect(isSafeOutputFileName("renamed.json", "tag_catalog.json")).toBe(false);

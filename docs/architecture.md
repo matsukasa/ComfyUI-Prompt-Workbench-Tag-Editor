@@ -11,7 +11,7 @@ File input
   -> format detection / parser
   -> canonical CatalogDocument
   -> Zustand history store
-  -> tree + virtualized kanban + header export action
+  -> tree + virtualized kanban + header overwrite/save-as actions
   -> validation + diff summary
   -> source-specific serializer
   -> Blob download

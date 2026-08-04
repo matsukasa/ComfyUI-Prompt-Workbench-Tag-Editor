@@ -10,12 +10,12 @@
 - Show every small-category lane. Keep four lanes visible at the desktop reference width and make additional lanes reachable with native horizontal scrolling plus explicit left/right controls.
 - Use orange as the primary accent for focus, selection, active filters, and primary actions while retaining category-specific lane colors.
 - Do not add a bottom destination selector, bulk move controls, selected-only control, or delete strip.
-- Edit major and medium category names by double-clicking their labels.
+- Edit major, medium, and small category names by double-clicking either visible label, then use compact in-row Japanese/English fields with save and cancel actions; never use a browser dialog for category editing.
 - Tag selection controls must remain compact square checkboxes. Edit a tag by double-clicking the tag name; do not add a per-row edit menu or instructional copy for this gesture.
 - Double-clicking either a tag name or its Japanese translation must open direct in-row editing for both values. Use compact in-row save and cancel actions; never use a browser dialog for tag editing.
 - Japanese tag translations must wrap within the available translation column and remain fully visible. Rows use measured variable heights; do not truncate translations with ellipses.
 - Keep moved, reordered, renamed, and newly added items visually distinguishable from the loaded baseline with a subtle orange tint plus a redundant change icon. Category drag previews must stay centered on the pointer, and major/medium destinations must use exact insertion lines instead of whole-row hover boxes.
-- Never overwrite `tag_catalog.json` or the currently loaded source file. Every export must use a distinct generated filename.
+- Match Prompt Workbench's save flow: offer `上書き保存` and `別名で保存`. Overwrite only a file opened through a writable File System Access API handle and only after explicit confirmation; otherwise disable overwrite and direct the user to save as.
 - Whenever showing generated mockups or screenshots, include a direct clickable link to the original image file so it can be opened at full size.
 - For right-pane tag rows, use the selected cool/warm typography direction: English prompt tags in cyan-white code text and Japanese translations in amber-peach text, with darker light-mode equivalents and no per-row cards or color bands.
 - Focus the lane containing the most recently selected tag: 31% focused / 23% neighboring lanes at desktop width and 38% / 31% at medium width. Lock the focus to the source lane during drag so the destination never moves under the pointer.

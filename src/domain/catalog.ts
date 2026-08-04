@@ -385,7 +385,7 @@ export function outputFileName(fileName: string, now = new Date()): string {
   const base = fileName.replace(/\.json$/iu, "") || "catalog";
   const part = (value: number) => String(value).padStart(2, "0");
   const stamp = `${now.getFullYear()}${part(now.getMonth() + 1)}${part(now.getDate())}_${part(now.getHours())}${part(now.getMinutes())}${part(now.getSeconds())}`;
-  return `${base}_edited_${stamp}.json`;
+  return `${base}_${stamp}.json`;
 }
 
 export function exportBytes(document: CatalogDocument): Uint8Array {

@@ -14,6 +14,9 @@ test("loads, selects, drags, undoes, redoes, exports and reloads without changin
   page,
 }, testInfo) => {
   const beforeHash = await sha256(samplePath);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { value: undefined });
+  });
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(samplePath);
   await expect(page.getByText("sample-tag-catalog.json を読み込みました")).toBeVisible();
@@ -50,11 +53,11 @@ test("loads, selects, drags, undoes, redoes, exports and reloads without changin
   await expect(page.getByLabel("two：移動済み")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("tags-changed.png"), animations: "disabled" });
 
-  await page.getByRole("button", { name: "新しいファイルとして書き出す" }).click();
+  await page.getByRole("button", { name: "別名で保存" }).click();
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("dialog").getByRole("button", { name: "新しいファイルとして書き出す" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "別名で保存" }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/^sample-tag-catalog_edited_\d{8}_\d{6}\.json$/u);
+  expect(download.suggestedFilename()).toMatch(/^sample-tag-catalog_\d{8}_\d{6}\.json$/u);
   expect(download.suggestedFilename()).not.toBe("tag_catalog.json");
   const downloadPath = await download.path();
   expect(downloadPath).toBeTruthy();
@@ -123,6 +126,35 @@ test("edits the tag name and Japanese translation directly in the row", async ({
   await expect(page.getByText("long_hair_edited", { exact: true })).toBeVisible();
   await expect(page.getByText("とても長い髪の日本語訳を折り返して表示", { exact: true })).toBeVisible();
   await expect(page.getByLabel("long_hair_edited：編集済み")).toBeVisible();
+});
+
+test("edits major, medium, and small category names directly in the tree rows", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("人物", { exact: true }).dblclick();
+
+  const majorName = page.getByRole("textbox", { name: "人物のカテゴリ名" });
+  const majorEnglishName = page.getByRole("textbox", { name: "人物の英語名" });
+  await expect(majorName).toBeFocused();
+  await majorName.fill("人物編集");
+  await majorEnglishName.fill("Person edited");
+  await page.getByRole("button", { name: "人物の変更を保存" }).click();
+  await expect(page.getByText("人物編集", { exact: true })).toBeVisible();
+  await expect(page.getByText("Person edited", { exact: true })).toBeVisible();
+
+  await page.getByText("髪", { exact: true }).dblclick();
+  await page.getByRole("textbox", { name: "髪のカテゴリ名" }).fill("髪編集");
+  await page.getByRole("textbox", { name: "髪の英語名" }).fill("Hair edited");
+  await page.getByRole("button", { name: "髪の変更を保存" }).click();
+  await expect(page.getByText("髪編集", { exact: true })).toBeVisible();
+  await expect(page.getByText("Hair edited", { exact: true })).toBeVisible();
+
+  await page.locator('[data-category-id="hair-style"] .category-label').dblclick();
+  await page.getByRole("textbox", { name: "髪型のカテゴリ名" }).fill("髪型編集");
+  await page.getByRole("textbox", { name: "髪型の英語名" }).fill("Hairstyle edited");
+  await page.getByRole("button", { name: "髪型の変更を保存" }).click();
+  const editedSmallRow = page.locator('[data-category-id="hair-style"]');
+  await expect(editedSmallRow.getByText("髪型編集", { exact: true })).toBeVisible();
+  await expect(editedSmallRow.getByText("Hairstyle edited", { exact: true })).toBeVisible();
 });
 
 test("keeps insertion feedback while reduced motion removes the trail", async ({ page }) => {

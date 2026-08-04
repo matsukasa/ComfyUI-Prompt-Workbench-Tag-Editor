@@ -30,6 +30,7 @@ interface StoreState {
   showSelectedOnly: boolean;
   error: string | null;
   load: (document: CatalogDocument) => void;
+  markSaved: (fileName: string) => void;
   setError: (error: string | null) => void;
   setSelectedMedium: (id: string) => void;
   toggleExpanded: (id: string, expanded?: boolean) => void;
@@ -110,6 +111,20 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
         .filter((item) => item.level !== "small")
         .map((item) => item.id),
       error: null,
+    }),
+  markSaved: (fileName) =>
+    set((state) => {
+      if (!state.document) return {};
+      const document = { ...state.document, fileName };
+      return {
+        document,
+        baseline: structuredClone(document),
+        history: [],
+        future: [],
+        touchedTagIds: [],
+        touchedCategoryIds: [],
+        error: null,
+      };
     }),
   setError: (error) => set({ error }),
   setSelectedMedium: (id) => set({ selectedMediumId: id }),

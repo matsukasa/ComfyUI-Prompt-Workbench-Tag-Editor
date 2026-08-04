@@ -26,6 +26,7 @@ import {
   FolderOpen,
   Moon,
   Redo2,
+  Save,
   Search,
   Settings,
   Sun,
@@ -73,6 +74,44 @@ interface TrailVector {
   visible: boolean;
 }
 
+type SaveMode = "overwrite" | "saveAs";
+
+interface CatalogWritable {
+  write: (data: string) => Promise<void>;
+  close: () => Promise<void>;
+  abort?: () => Promise<void>;
+}
+
+interface CatalogFileHandle {
+  name: string;
+  getFile: () => Promise<File>;
+  createWritable: () => Promise<CatalogWritable>;
+}
+
+interface CatalogPickerOptions {
+  id: string;
+  suggestedName?: string;
+  startIn?: CatalogFileHandle;
+  multiple?: boolean;
+  types: Array<{
+    description: string;
+    accept: Record<string, string[]>;
+  }>;
+}
+
+type CatalogWindow = Window & {
+  showOpenFilePicker?: (options: CatalogPickerOptions) => Promise<CatalogFileHandle[]>;
+  showSaveFilePicker?: (options: CatalogPickerOptions) => Promise<CatalogFileHandle>;
+};
+
+const CATALOG_FILE_PICKER_ID = "prompt-workbench-catalog-save";
+const CATALOG_FILE_PICKER_TYPES = [
+  {
+    description: "JSONタグファイル",
+    accept: { "application/json": [".json"] },
+  },
+];
+
 function downloadFile(
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
   name: string,
@@ -87,6 +126,20 @@ function downloadFile(
   anchor.download = name;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+async function writeCatalogFile(
+  handle: CatalogFileHandle,
+  document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
+): Promise<void> {
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(serializeCatalog(document));
+    await writable.close();
+  } catch (error) {
+    await writable.abort?.().catch(() => undefined);
+    throw error;
+  }
 }
 
 function useKeyboardShortcuts(): void {
@@ -115,7 +168,9 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
+  const [currentCatalogFileHandle, setCurrentCatalogFileHandle] = useState<CatalogFileHandle | null>(null);
+  const [saving, setSaving] = useState(false);
   const [activeDrag, setActiveDrag] = useState<{ type: "tag" | "category"; id: string } | null>(null);
   const [overCategoryId, setOverCategoryId] = useState<string | null>(null);
   const [overTreeCategoryId, setOverTreeCategoryId] = useState<string | null>(null);
@@ -231,7 +286,7 @@ export function App() {
           changedCategories: 0,
           duplicateDelta: 0,
         };
-  const outputName = document ? outputFileName(document.fileName) : "catalog_edited.json";
+  const outputName = document ? outputFileName(document.fileName) : "catalog.json";
   const focusedCategoryId = useMemo(() => {
     const tagId = activeDrag?.type === "tag" ? activeDrag.id : store.anchorTagId;
     return tagId ? (document?.tags.find((tag) => tag.uid === tagId)?.categoryId ?? null) : null;
@@ -248,25 +303,98 @@ export function App() {
 
   const confirmDiscard = () =>
     !dirty || window.confirm("未保存の変更があります。破棄して別ファイルを読み込みますか？");
-  const openFile = async (file?: File) => {
-    if (!file || !confirmDiscard()) return;
+  const loadSelectedFile = async (file?: File, fileHandle: CatalogFileHandle | null = null) => {
+    if (!file) return;
     try {
       const parsed = await parseCatalogFile(file);
       store.load(parsed);
+      setCurrentCatalogFileHandle(fileHandle);
       setToast({ message: `${file.name} を読み込みました` });
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
     }
   };
-  const onExport = () => {
-    if (issues.some((issue) => issue.severity === "error")) return;
-    try {
-      downloadFile(document, outputName);
-      setPreviewOpen(false);
-      setToast({ message: `${outputName} を書き出しました` });
-    } catch (error) {
-      store.setError(error instanceof Error ? error.message : "ファイルを書き出せませんでした。");
+  const openCatalogFile = async () => {
+    if (!confirmDiscard()) return;
+    const catalogWindow = window as CatalogWindow;
+    if (!catalogWindow.showOpenFilePicker) {
+      if (fileInput.current) fileInput.current.value = "";
+      fileInput.current?.click();
+      return;
     }
+    try {
+      const [fileHandle] = await catalogWindow.showOpenFilePicker({
+        id: CATALOG_FILE_PICKER_ID,
+        multiple: false,
+        types: CATALOG_FILE_PICKER_TYPES,
+      });
+      await loadSelectedFile(await fileHandle.getFile(), fileHandle);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setToast({ message: "読み込みをキャンセルしました" });
+        return;
+      }
+      store.setError(error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
+    }
+  };
+  const saveAsNewFile = async () => {
+    setSaving(true);
+    try {
+      const catalogWindow = window as CatalogWindow;
+      if (catalogWindow.showSaveFilePicker) {
+        const pickerOptions: CatalogPickerOptions = {
+          id: CATALOG_FILE_PICKER_ID,
+          suggestedName: outputName,
+          types: CATALOG_FILE_PICKER_TYPES,
+        };
+        if (currentCatalogFileHandle) pickerOptions.startIn = currentCatalogFileHandle;
+        const savedFileHandle = await catalogWindow.showSaveFilePicker(pickerOptions);
+        await writeCatalogFile(savedFileHandle, document);
+        setCurrentCatalogFileHandle(savedFileHandle);
+        store.markSaved(savedFileHandle.name);
+        setToast({ message: `${savedFileHandle.name} に別名保存しました` });
+      } else {
+        downloadFile(document, outputName);
+        setCurrentCatalogFileHandle(null);
+        store.markSaved(outputName);
+        setToast({ message: `${outputName} をダウンロードしました` });
+      }
+      setSaveMode(null);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setToast({ message: "別名保存をキャンセルしました" });
+        return;
+      }
+      store.setError(error instanceof Error ? error.message : "ファイルを保存できませんでした。");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const overwriteCurrentFile = async () => {
+    if (!currentCatalogFileHandle) {
+      store.setError("このファイルは上書きできません。別名で保存してください。");
+      return;
+    }
+    if (!window.confirm(`${currentCatalogFileHandle.name} を上書き保存しますか？`)) {
+      setToast({ message: "上書き保存をキャンセルしました" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await writeCatalogFile(currentCatalogFileHandle, document);
+      store.markSaved(currentCatalogFileHandle.name);
+      setSaveMode(null);
+      setToast({ message: `${currentCatalogFileHandle.name} を上書き保存しました` });
+    } catch (error) {
+      store.setError(error instanceof Error ? error.message : "ファイルを上書き保存できませんでした。");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveCatalog = () => {
+    if (issues.some((issue) => issue.severity === "error")) return;
+    if (saveMode === "overwrite") void overwriteCurrentFile();
+    else if (saveMode === "saveAs") void saveAsNewFile();
   };
   const scrollLanes = (direction: -1 | 1) => {
     const scroller = laneScroller.current;
@@ -383,11 +511,7 @@ export function App() {
   const editTag = (tag: TagOccurrence, prompt: string, translationJa: string) => {
     store.editTag(tag.uid, prompt, translationJa);
   };
-  const editCategory = (category: CategoryNode) => {
-    const labelJa = window.prompt("カテゴリ名を編集", category.labelJa);
-    if (labelJa === null) return;
-    const labelEn = window.prompt("英語名を編集", category.labelEn);
-    if (labelEn === null) return;
+  const editCategory = (category: CategoryNode, labelJa: string, labelEn: string) => {
     store.editCategory(category.id, labelJa, labelEn);
   };
   const addTags = (categoryId: string) => {
@@ -420,7 +544,7 @@ export function App() {
       <header className="app-toolbar">
         <div className="app-title">
           <FileJson />
-          <strong>Prompt Workbench Tag Editor</strong>
+          <strong>ComfyUI Prompt Workbench Tag Editor</strong>
           <span>{document.fileName}</span>
           {dirty && (
             <span className="unsaved">
@@ -435,9 +559,9 @@ export function App() {
             type="file"
             accept=".json,application/json"
             hidden
-            onChange={(event) => void openFile(event.target.files?.[0])}
+            onChange={(event) => void loadSelectedFile(event.target.files?.[0])}
           />
-          <button type="button" onClick={() => fileInput.current?.click()}>
+          <button type="button" onClick={() => void openCatalogFile()}>
             <FolderOpen />
             タグ設定ファイルを開く
           </button>
@@ -474,9 +598,28 @@ export function App() {
           <button className="icon-button" type="button" aria-label="設定">
             <Settings />
           </button>
-          <button className="primary-button" type="button" onClick={() => setPreviewOpen(true)}>
+          <button
+            className="save-button"
+            type="button"
+            disabled={!currentCatalogFileHandle || saving}
+            title={
+              currentCatalogFileHandle
+                ? `${currentCatalogFileHandle.name} を上書き保存`
+                : "上書きできるファイルがありません。別名で保存してください"
+            }
+            onClick={() => setSaveMode("overwrite")}
+          >
+            <Save />
+            上書き保存
+          </button>
+          <button
+            className="primary-button save-button"
+            type="button"
+            disabled={saving}
+            onClick={() => setSaveMode("saveAs")}
+          >
             <Download />
-            新しいファイルとして書き出す
+            別名で保存
           </button>
         </div>
       </header>
@@ -647,12 +790,16 @@ export function App() {
         </div>
       )}
       <PreviewDialog
-        open={previewOpen}
-        fileName={outputName}
+        open={saveMode !== null}
+        mode={saveMode ?? "saveAs"}
+        fileName={
+          saveMode === "overwrite" ? (currentCatalogFileHandle?.name ?? document.fileName) : outputName
+        }
         summary={summary}
         issues={issues}
-        onClose={() => setPreviewOpen(false)}
-        onExport={onExport}
+        saving={saving}
+        onClose={() => setSaveMode(null)}
+        onSave={saveCatalog}
       />
     </div>
   );

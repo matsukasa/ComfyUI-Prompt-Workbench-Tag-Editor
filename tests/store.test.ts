@@ -26,6 +26,21 @@ it("tracks the dirty state and can reset", () => {
   expect(useCatalogStore.getState().touchedTagIds).toEqual([]);
 });
 
+it("marks the current document as saved under its latest file name", () => {
+  const tag = useCatalogStore.getState().document!.tags[0];
+  useCatalogStore.getState().editTag(tag.uid, "saved-change", "");
+  expect(isDirty(useCatalogStore.getState())).toBe(true);
+
+  useCatalogStore.getState().markSaved("saved-tags.json");
+
+  const state = useCatalogStore.getState();
+  expect(state.document?.fileName).toBe("saved-tags.json");
+  expect(state.baseline?.fileName).toBe("saved-tags.json");
+  expect(isDirty(state)).toBe(false);
+  expect(state.history).toEqual([]);
+  expect(state.touchedTagIds).toEqual([]);
+});
+
 it("supports ctrl-like toggle and shift-like range selection", () => {
   const ids = useCatalogStore
     .getState()
