@@ -8,6 +8,7 @@ import { isDirty, useCatalogStore } from "../../src/store/catalogStore";
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  window.localStorage.clear();
   useCatalogStore.getState().load(structuredClone(demoDocument));
   vi.spyOn(window, "confirm").mockReturnValue(true);
 });
@@ -150,6 +151,17 @@ it("removes the ambiguous bottom selection dock", () => {
 it("labels the file picker as a tag settings file action", () => {
   render(<App />);
   expect(screen.getByRole("button", { name: "タグ設定ファイルを開く" })).toBeInTheDocument();
+});
+
+it("toggles drag sounds from the settings popover and remembers the preference", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "設定" }));
+  const soundToggle = screen.getByRole("switch", { name: "操作音" });
+  expect(soundToggle).toHaveAttribute("aria-checked", "true");
+  await user.click(soundToggle);
+  expect(screen.getByRole("switch", { name: "操作音" })).toHaveAttribute("aria-checked", "false");
+  expect(window.localStorage.getItem("prompt-workbench-tag-editor:drag-sounds")).toBe("off");
 });
 
 it("supports ctrl-click and shift-click selection", async () => {

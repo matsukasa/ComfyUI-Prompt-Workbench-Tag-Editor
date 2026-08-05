@@ -4,6 +4,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --z-sticky: 20;
+  --z-popover: 40;
   --z-modal-backdrop: 60;
   --z-modal: 70;
   --z-toast: 80;
@@ -166,6 +167,55 @@ button:disabled {
 .icon-button {
   width: 34px;
   padding: 0;
+}
+.settings-control {
+  position: relative;
+  display: flex;
+}
+.settings-control > .icon-button.is-active {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 62%, var(--line));
+}
+.settings-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  width: 268px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px;
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
+  border-radius: 9px;
+  background: var(--surface-0);
+  box-shadow: 0 12px 28px oklch(0.05 0 0 / 0.42);
+}
+.settings-popover > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.settings-popover strong {
+  font-size: 12px;
+}
+.settings-popover span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.settings-popover .sound-toggle {
+  min-width: 72px;
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 52%, var(--line));
+  background: color-mix(in oklch, var(--accent) 9%, var(--surface-1));
+  font-weight: 750;
+}
+.settings-popover .sound-toggle[aria-checked="false"] {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface-1);
 }
 .primary-button {
   background: oklch(0.64 0.19 48);

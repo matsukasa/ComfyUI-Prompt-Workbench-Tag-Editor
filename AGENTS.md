@@ -20,6 +20,7 @@
 - For right-pane tag rows, use the selected cool/warm typography direction: English prompt tags in cyan-white code text and Japanese translations in amber-peach text, with darker light-mode equivalents and no per-row cards or color bands.
 - Focus the lane containing the most recently selected tag: 31% focused / 23% neighboring lanes at desktop width and 38% / 31% at medium width. Lock the focus to the source lane during drag so the destination never moves under the pointer.
 - Tag drag previews stay centered on the pointer and use only a short directional afterimage that fades after about 200ms. Use a precise orange insertion line, compact direction icon, brief moved-row pulse, and an undo action in the success toast; never show a persistent cursor trail or tree-to-lane connector.
+- Dragging tags and every category level (major, medium, and small) uses the same clearly audible synthesized feedback: an airy tube-like "カシュッ" pickup sound with little low-end pop, a short dry "カッ" click whenever the effective insertion destination changes, and a gentle landing sound after a successful drop. Never play insertion sounds on every pointer move or play a success sound for cancelled or invalid drops. Keep an accessible persistent operation-sound toggle in Settings.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 

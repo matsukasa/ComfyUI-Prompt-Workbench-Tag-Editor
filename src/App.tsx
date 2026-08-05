@@ -31,9 +31,16 @@ import {
   Settings,
   Sun,
   Undo2,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createDragSoundController,
+  readDragSoundPreference,
+  writeDragSoundPreference,
+} from "./audio/dragSounds";
 import { CategoryTree } from "./components/CategoryTree";
 import { KanbanLane } from "./components/Kanban";
 import { PreviewDialog } from "./components/PreviewDialog";
@@ -168,6 +175,8 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [soundEnabled, setSoundEnabled] = useState(readDragSoundPreference);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
   const [currentCatalogFileHandle, setCurrentCatalogFileHandle] = useState<CatalogFileHandle | null>(null);
   const [saving, setSaving] = useState(false);
@@ -182,6 +191,7 @@ export function App() {
   const trailFrame = useRef<number | null>(null);
   const trailTimer = useRef<number | null>(null);
   const recentMoveTimer = useRef<number | null>(null);
+  const dragSounds = useRef(createDragSoundController());
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -411,6 +421,7 @@ export function App() {
     if (type === "tag" || type === "category") setActiveDrag({ type, id });
     previousDragDelta.current = { x: 0, y: 0 };
     setTrailVector({ x: 0, y: 0, visible: false });
+    dragSounds.current.start(soundEnabled);
   };
   const onDragMove = (event: DragMoveEvent) => {
     if (event.active.data.current?.type !== "tag") return;
@@ -438,6 +449,29 @@ export function App() {
   };
   const onDragOver = (event: DragOverEvent) => {
     const categoryId = event.over?.data.current?.categoryId as string | undefined;
+    const overData = event.over?.data.current;
+    const activeType = event.active.data.current?.type;
+    const activeId =
+      activeType === "tag"
+        ? String(event.active.data.current?.tagId)
+        : String(event.active.data.current?.categoryId);
+    const target = categoryId ? document.categories.find((item) => item.id === categoryId) : undefined;
+    const validSoundTarget =
+      activeType === "tag"
+        ? target?.level === "small"
+        : activeType === "category" && overData?.type === "category-level-target"
+          ? `${String(event.over?.id)}:major-root`
+          : activeType === "category" && categoryId && categoryId !== activeId
+            ? `${String(event.over?.id)}:${target?.level ?? "unknown"}`
+            : null;
+    dragSounds.current.moveTo(
+      typeof validSoundTarget === "string"
+        ? validSoundTarget
+        : validSoundTarget
+          ? String(event.over?.id)
+          : null,
+      soundEnabled,
+    );
     setOverCategoryId(categoryId ?? null);
     setOverTreeCategoryId(
       String(event.over?.id ?? "").startsWith("tree-category:") ? (categoryId ?? null) : null,
@@ -450,6 +484,7 @@ export function App() {
   const onDragEnd = (event: DragEndEvent) => {
     const activeType = event.active.data.current?.type;
     const overData = event.over?.data.current;
+    let successful = false;
     try {
       if (activeType === "tag" && overData?.categoryId) {
         const target = document.categories.find((item) => item.id === overData.categoryId);
@@ -467,6 +502,7 @@ export function App() {
           detail: `${movedTagIds.length}件を ${target.labelJa} へ移動`,
           undoable: true,
         });
+        successful = true;
       } else if (activeType === "category") {
         const activeId = String(event.active.data.current?.categoryId);
         if (overData?.type === "category-level-target" && overData.targetLevel === "major") {
@@ -475,6 +511,7 @@ export function App() {
           }
           store.applyCategoryLevelChange(activeId, "major");
           setToast({ message: "中分類を大分類へ変更しました" });
+          successful = true;
         } else if (overData?.categoryId) {
           const activeCategory = document.categories.find((item) => item.id === activeId);
           const overCategory = document.categories.find((item) => item.id === overData.categoryId);
@@ -492,6 +529,7 @@ export function App() {
                 ? "大分類を中分類へ変更しました"
                 : "カテゴリ階層を更新しました",
           });
+          successful = true;
         }
       }
     } catch (error) {
@@ -501,12 +539,14 @@ export function App() {
     setOverCategoryId(null);
     setOverTreeCategoryId(null);
     setTrailVector((current) => ({ ...current, visible: false }));
+    dragSounds.current.finish(successful, soundEnabled);
   };
   const cancelDrag = () => {
     setActiveDrag(null);
     setOverCategoryId(null);
     setOverTreeCategoryId(null);
     setTrailVector((current) => ({ ...current, visible: false }));
+    dragSounds.current.cancel();
   };
   const editTag = (tag: TagOccurrence, prompt: string, translationJa: string) => {
     store.editTag(tag.uid, prompt, translationJa);
@@ -595,9 +635,41 @@ export function App() {
           >
             {theme === "dark" ? <Sun /> : <Moon />}
           </button>
-          <button className="icon-button" type="button" aria-label="設定">
-            <Settings />
-          </button>
+          <div className="settings-control">
+            <button
+              className={`icon-button ${settingsOpen ? "is-active" : ""}`}
+              type="button"
+              aria-label="設定"
+              aria-expanded={settingsOpen}
+              aria-controls="editor-settings"
+              onClick={() => setSettingsOpen((current) => !current)}
+            >
+              <Settings />
+            </button>
+            {settingsOpen && (
+              <div id="editor-settings" className="settings-popover" role="dialog" aria-label="設定">
+                <div>
+                  <strong>操作音</strong>
+                  <span>ドラッグの開始・移動・ドロップ</span>
+                </div>
+                <button
+                  className="sound-toggle"
+                  type="button"
+                  role="switch"
+                  aria-label="操作音"
+                  aria-checked={soundEnabled}
+                  onClick={() => {
+                    const next = !soundEnabled;
+                    setSoundEnabled(next);
+                    writeDragSoundPreference(next);
+                  }}
+                >
+                  {soundEnabled ? <Volume2 /> : <VolumeX />}
+                  {soundEnabled ? "オン" : "オフ"}
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className="save-button"
             type="button"
