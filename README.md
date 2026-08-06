@@ -93,16 +93,10 @@ File System Access APIに対応していないブラウザでは、ファイル�
 
 JSON以外のYAML、CSV、JavaScript、コメント付きJSONには対応しません。詳しくは [docs/file-format.md](docs/file-format.md) を参照してください。
 
-## ビルドと品質チェック
+## ビルド
 
 ```powershell
-npm run typecheck
-npm run lint
-npm run format:check
-npm run test
-npm run test:e2e
 npm run build
-npm run test:sites
 ```
 
 本番成果物は `dist/client` に生成されます。
@@ -122,4 +116,4 @@ npm run test:sites
 - 文字コードはUTF-8のみです。UTF-8 BOMの有無、LF／CRLF、インデント、末尾改行は維持します。
 - 既存の未知プロパティは保持しますが、新規カテゴリ・タグには元データ由来の未知値はありません。
 
-設計、安全性、検証の詳細は `docs/` を参照してください。
+データの取り扱いについては [docs/data-safety.md](docs/data-safety.md) を参照してください。
