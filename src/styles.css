@@ -236,6 +236,29 @@ button:disabled {
   border-color: var(--danger);
   background: color-mix(in oklch, var(--danger) 14%, var(--surface-1));
 }
+.localhost-save-link {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in oklch, var(--accent) 65%, var(--line));
+  border-radius: 6px;
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 9%, var(--surface-1));
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.localhost-save-link:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.localhost-save-link svg {
+  width: 14px;
+  height: 14px;
+}
 .search-control {
   display: flex;
   align-items: center;

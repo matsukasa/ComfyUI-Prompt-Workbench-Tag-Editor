@@ -12,7 +12,7 @@ if errorlevel 1 goto :install_failed
 :run
 echo Starting ComfyUI Prompt Workbench Tag Editor...
 echo Open http://localhost:5173 in your browser.
-call npm.cmd run dev
+call npm.cmd run dev -- --open
 exit /b %errorlevel%
 
 :missing_npm

@@ -320,6 +320,13 @@ export function App() {
   const canOverwriteCurrentFile =
     Boolean(currentCatalogFileHandle) ||
     (!isDefaultCatalogFile && Boolean(catalogWindow.showSaveFilePicker));
+  const needsLocalhostForOverwrite =
+    !isDefaultCatalogFile &&
+    !currentCatalogFileHandle &&
+    !catalogWindow.showSaveFilePicker &&
+    !window.isSecureContext &&
+    window.location.hostname !== "localhost";
+  const localhostUrl = `${window.location.protocol}//localhost${window.location.port ? `:${window.location.port}` : ""}${window.location.pathname}${window.location.search}${window.location.hash}`;
 
   const confirmDiscard = () =>
     !dirty || window.confirm("未保存の変更があります。破棄して別ファイルを読み込みますか？");
@@ -733,6 +740,12 @@ export function App() {
             <Save />
             上書き保存
           </button>
+          {needsLocalhostForOverwrite && (
+            <a className="localhost-save-link" href={localhostUrl} title="安全なローカルURLで開き直します">
+              <AlertTriangle />
+              localhostで開いて上書き
+            </a>
+          )}
           <button
             className="primary-button save-button"
             type="button"
