@@ -47,6 +47,7 @@ interface StoreState {
   applyCategoryLevelChange: (id: string, targetLevel: "major" | "medium", parentId?: string) => void;
   editTag: (uid: string, prompt: string, translationJa: string) => void;
   createTags: (categoryId: string, values: string[]) => void;
+  removeTags: (uids: string[]) => void;
   removeSelectedTags: () => void;
   createCategory: (level: CategoryLevel, parentId: string, labelJa: string) => void;
   editCategory: (id: string, labelJa: string, labelEn: string) => void;
@@ -186,11 +187,17 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
     set((state) => ({ touchedTagIds: [...new Set([...state.touchedTagIds, uid])] }));
   },
   createTags: (categoryId, values) => mutate(set, (document) => addTags(document, categoryId, values)),
-  removeSelectedTags: () => {
-    const selected = get().selectedTagIds;
-    mutate(set, (document) => deleteTags(document, selected));
-    set({ selectedTagIds: [], anchorTagId: null });
+  removeTags: (uids) => {
+    if (!uids.length) return;
+    const removed = new Set(uids);
+    mutate(set, (document) => deleteTags(document, uids));
+    set((state) => ({
+      selectedTagIds: state.selectedTagIds.filter((uid) => !removed.has(uid)),
+      touchedTagIds: state.touchedTagIds.filter((uid) => !removed.has(uid)),
+      anchorTagId: state.anchorTagId && removed.has(state.anchorTagId) ? null : state.anchorTagId,
+    }));
   },
+  removeSelectedTags: () => get().removeTags(get().selectedTagIds),
   createCategory: (level, parentId, labelJa) =>
     mutate(set, (document) => addCategory(document, level, parentId, labelJa)),
   editCategory: (id, labelJa, labelEn) => {
@@ -198,7 +205,36 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
     set((state) => ({ touchedCategoryIds: [...new Set([...state.touchedCategoryIds, id])] }));
   },
   removeCategory: (id, destinationId, deleteTagsToo) =>
-    mutate(set, (document) => deleteCategory(document, id, destinationId, deleteTagsToo)),
+    set((state) => {
+      if (!state.document) return {};
+      try {
+        const next = deleteCategory(state.document, id, destinationId, deleteTagsToo);
+        const remainingCategoryIds = new Set(next.categories.map((category) => category.id));
+        const remainingTagIds = new Set(next.tags.map((tag) => tag.uid));
+        return {
+          document: next,
+          history: [...state.history, state.document].slice(-100),
+          future: [],
+          selectedTagIds: state.selectedTagIds.filter((uid) => remainingTagIds.has(uid)),
+          touchedTagIds: state.touchedTagIds.filter((uid) => remainingTagIds.has(uid)),
+          touchedCategoryIds: state.touchedCategoryIds.filter((categoryId) =>
+            remainingCategoryIds.has(categoryId),
+          ),
+          anchorTagId:
+            state.anchorTagId && remainingTagIds.has(state.anchorTagId) ? state.anchorTagId : null,
+          selectedMediumId:
+            state.selectedMediumId && remainingCategoryIds.has(state.selectedMediumId)
+              ? state.selectedMediumId
+              : firstMedium(next),
+          expandedCategoryIds: state.expandedCategoryIds.filter((categoryId) =>
+            remainingCategoryIds.has(categoryId),
+          ),
+          error: null,
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "分類を削除できませんでした。" };
+      }
+    }),
   undo: () =>
     set((state) => {
       const previous = state.history.at(-1);

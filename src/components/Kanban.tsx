@@ -9,6 +9,7 @@ import {
   MoveDown,
   PencilLine,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -24,6 +25,7 @@ interface TagRowProps {
   visibleIds: string[];
   onSelect: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   onEdit: (tag: TagOccurrence, prompt: string, translationJa: string) => void;
+  onDelete: (tag: TagOccurrence) => void;
 }
 
 function TagRow({
@@ -35,8 +37,10 @@ function TagRow({
   visibleIds,
   onSelect,
   onEdit,
+  onDelete,
 }: TagRowProps) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(tag.prompt);
   const [draftTranslation, setDraftTranslation] = useState(tag.translationJa);
   const [promptInvalid, setPromptInvalid] = useState(false);
@@ -61,12 +65,14 @@ function TagRow({
     setDraftPrompt(tag.prompt);
     setDraftTranslation(tag.translationJa);
     setPromptInvalid(false);
+    setConfirmingDelete(false);
     setEditing(true);
   };
   const cancelEditing = () => {
     setDraftPrompt(tag.prompt);
     setDraftTranslation(tag.translationJa);
     setPromptInvalid(false);
+    setConfirmingDelete(false);
     setEditing(false);
   };
   const saveEditing = () => {
@@ -126,7 +132,40 @@ function TagRow({
         {selected && <Check />}
       </button>
       {editing ? (
-        <>
+        confirmingDelete ? (
+          <span
+            className="tag-inline-delete-confirmation inline-delete-confirmation"
+            role="group"
+            aria-label={`${tag.prompt}を削除`}
+          >
+            <Trash2 aria-hidden="true" />
+            <span>
+              <strong>{tag.prompt}を削除</strong>
+              <small>保存前なら元に戻せます</small>
+            </span>
+            <button
+              className="inline-delete-confirm"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(tag);
+              }}
+            >
+              削除する
+            </button>
+            <button
+              className="inline-delete-back"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setConfirmingDelete(false);
+              }}
+            >
+              戻る
+            </button>
+          </span>
+        ) : (
+          <>
           <input
             ref={promptInputRef}
             className="inline-tag-prompt"
@@ -186,7 +225,19 @@ function TagRow({
           >
             <X />
           </button>
+          <button
+            className="inline-edit-delete"
+            type="button"
+            aria-label={`${tag.prompt}を削除`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setConfirmingDelete(true);
+            }}
+          >
+            <Trash2 />
+          </button>
         </>
+        )
       ) : (
         <>
           <span
@@ -256,6 +307,7 @@ interface LaneProps {
   onSelect: TagRowProps["onSelect"];
   onSelectAll: (uids: string[]) => void;
   onEdit: TagRowProps["onEdit"];
+  onDelete: TagRowProps["onDelete"];
   onAdd: (categoryId: string) => void;
 }
 
@@ -343,6 +395,7 @@ export function KanbanLane(props: LaneProps) {
               visibleIds={visibleIds}
               onSelect={props.onSelect}
               onEdit={props.onEdit}
+              onDelete={props.onDelete}
             />
           ))
         ) : (
@@ -369,6 +422,7 @@ export function KanbanLane(props: LaneProps) {
                     visibleIds={visibleIds}
                     onSelect={props.onSelect}
                     onEdit={props.onEdit}
+                    onDelete={props.onDelete}
                   />
                 </div>
               );

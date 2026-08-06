@@ -30,6 +30,7 @@ import {
   Search,
   Settings,
   Sun,
+  Trash2,
   Undo2,
   Volume2,
   VolumeX,
@@ -45,6 +46,7 @@ import { CategoryTree } from "./components/CategoryTree";
 import { KanbanLane } from "./components/Kanban";
 import { PreviewDialog } from "./components/PreviewDialog";
 import {
+  DEFAULT_CATALOG_FILE_NAME,
   duplicateMap,
   isSafeOutputFileName,
   outputFileName,
@@ -177,6 +179,7 @@ export function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [soundEnabled, setSoundEnabled] = useState(readDragSoundPreference);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
   const [currentCatalogFileHandle, setCurrentCatalogFileHandle] = useState<CatalogFileHandle | null>(null);
   const [saving, setSaving] = useState(false);
@@ -311,6 +314,13 @@ export function App() {
 
   if (!document || !baseline) return <main className="loading-screen">カタログを準備しています…</main>;
 
+  const catalogWindow = window as CatalogWindow;
+  const isDefaultCatalogFile =
+    document.fileName.trim().toLocaleLowerCase() === DEFAULT_CATALOG_FILE_NAME.toLocaleLowerCase();
+  const canOverwriteCurrentFile =
+    Boolean(currentCatalogFileHandle) ||
+    (!isDefaultCatalogFile && Boolean(catalogWindow.showSaveFilePicker));
+
   const confirmDiscard = () =>
     !dirty || window.confirm("未保存の変更があります。破棄して別ファイルを読み込みますか？");
   const loadSelectedFile = async (file?: File, fileHandle: CatalogFileHandle | null = null) => {
@@ -381,20 +391,38 @@ export function App() {
     }
   };
   const overwriteCurrentFile = async () => {
-    if (!currentCatalogFileHandle) {
+    let overwriteHandle = currentCatalogFileHandle;
+    if (!overwriteHandle && !isDefaultCatalogFile && catalogWindow.showSaveFilePicker) {
+      try {
+        overwriteHandle = await catalogWindow.showSaveFilePicker({
+          id: CATALOG_FILE_PICKER_ID,
+          suggestedName: document.fileName,
+          types: CATALOG_FILE_PICKER_TYPES,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setToast({ message: "上書き保存をキャンセルしました" });
+          return;
+        }
+        store.setError(error instanceof Error ? error.message : "保存先を選択できませんでした。");
+        return;
+      }
+    }
+    if (!overwriteHandle) {
       store.setError("このファイルは上書きできません。別名で保存してください。");
       return;
     }
-    if (!window.confirm(`${currentCatalogFileHandle.name} を上書き保存しますか？`)) {
+    if (!window.confirm(`${overwriteHandle.name} を上書き保存しますか？`)) {
       setToast({ message: "上書き保存をキャンセルしました" });
       return;
     }
     setSaving(true);
     try {
-      await writeCatalogFile(currentCatalogFileHandle, document);
-      store.markSaved(currentCatalogFileHandle.name);
+      await writeCatalogFile(overwriteHandle, document);
+      setCurrentCatalogFileHandle(overwriteHandle);
+      store.markSaved(overwriteHandle.name);
       setSaveMode(null);
-      setToast({ message: `${currentCatalogFileHandle.name} を上書き保存しました` });
+      setToast({ message: `${overwriteHandle.name} を上書き保存しました` });
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを上書き保存できませんでした。");
     } finally {
@@ -554,6 +582,25 @@ export function App() {
   const editCategory = (category: CategoryNode, labelJa: string, labelEn: string) => {
     store.editCategory(category.id, labelJa, labelEn);
   };
+  const deleteTags = (uids: string[]) => {
+    if (!uids.length) return;
+    store.removeTags(uids);
+    setRecentlyMovedTagIds((current) => current.filter((uid) => !uids.includes(uid)));
+    setBulkDeleteArmed(false);
+    setToast({
+      message: uids.length === 1 ? "タグを削除しました" : `${uids.length}件のタグを削除しました`,
+      detail: "保存前なら元に戻せます",
+      undoable: true,
+    });
+  };
+  const deleteCategory = (category: CategoryNode, descendantCount: number, tagCount: number) => {
+    store.removeCategory(category.id, undefined, true);
+    setToast({
+      message: `${category.labelJa}を削除しました`,
+      detail: `${descendantCount + 1}分類・${tagCount}タグを削除 / 保存前なら元に戻せます`,
+      undoable: true,
+    });
+  };
   const addTags = (categoryId: string) => {
     const input = window.prompt("追加するタグを改行またはカンマ区切りで入力してください。");
     if (!input) return;
@@ -673,10 +720,12 @@ export function App() {
           <button
             className="save-button"
             type="button"
-            disabled={!currentCatalogFileHandle || saving}
+            disabled={!canOverwriteCurrentFile || saving}
             title={
               currentCatalogFileHandle
                 ? `${currentCatalogFileHandle.name} を上書き保存`
+                : canOverwriteCurrentFile
+                  ? `${document.fileName} の保存先を確認して上書き保存`
                 : "上書きできるファイルがありません。別名で保存してください"
             }
             onClick={() => setSaveMode("overwrite")}
@@ -724,6 +773,7 @@ export function App() {
             onToggle={store.toggleExpanded}
             onSelectMedium={store.setSelectedMedium}
             onEditCategory={editCategory}
+            onDeleteCategory={deleteCategory}
             onAddCategory={addCategory}
             onExpandAll={store.expandAll}
           />
@@ -753,6 +803,31 @@ export function App() {
                 <Filter />
                 重複タグのみ
               </button>
+              {store.selectedTagIds.length > 0 && (
+                <div className={`bulk-delete-control ${bulkDeleteArmed ? "is-confirming" : ""}`}>
+                  {bulkDeleteArmed ? (
+                    <>
+                      <span role="status">選択中{store.selectedTagIds.length}件を削除します</span>
+                      <button
+                        className="danger-button bulk-delete-confirm"
+                        type="button"
+                        onClick={() => deleteTags(store.selectedTagIds)}
+                      >
+                        <Trash2 />
+                        削除を確定
+                      </button>
+                      <button type="button" onClick={() => setBulkDeleteArmed(false)}>
+                        キャンセル
+                      </button>
+                    </>
+                  ) : (
+                    <button className="danger-button" type="button" onClick={() => setBulkDeleteArmed(true)}>
+                      <Trash2 />
+                      選択中{store.selectedTagIds.length}件を削除
+                    </button>
+                  )}
+                </div>
+              )}
               <span className="workspace-status">
                 {document.tags.length.toLocaleString()} タグ / {document.categories.length} カテゴリ
               </span>
@@ -794,6 +869,7 @@ export function App() {
                     onSelect={store.selectTag}
                     onSelectAll={store.selectMany}
                     onEdit={editTag}
+                    onDelete={(tag) => deleteTags([tag.uid])}
                     onAdd={addTags}
                   />
                 ))}
@@ -853,7 +929,7 @@ export function App() {
               onClick={() => {
                 store.undo();
                 setRecentlyMovedTagIds([]);
-                setToast({ message: "移動を元に戻しました" });
+                setToast({ message: "操作を元に戻しました" });
               }}
             >
               元に戻す

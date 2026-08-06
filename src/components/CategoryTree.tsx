@@ -8,6 +8,7 @@ import {
   History,
   Search,
   Tags,
+  Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +32,7 @@ interface TreeProps {
   onToggle: (id: string) => void;
   onSelectMedium: (id: string) => void;
   onEditCategory: (category: CategoryNode, labelJa: string, labelEn: string) => void;
+  onDeleteCategory: (category: CategoryNode, descendantCount: number, tagCount: number) => void;
   onAddCategory: () => void;
   onExpandAll: (expanded: boolean) => void;
 }
@@ -40,6 +42,7 @@ interface RowProps {
   color: string;
   depth: number;
   count: number;
+  descendantCount: number;
   expanded: boolean;
   selected: boolean;
   over: boolean;
@@ -51,6 +54,7 @@ interface RowProps {
   onToggle: () => void;
   onSelect: () => void;
   onEdit: (labelJa: string, labelEn: string) => void;
+  onDelete: () => void;
 }
 
 function CategoryRow({
@@ -58,6 +62,7 @@ function CategoryRow({
   color,
   depth,
   count,
+  descendantCount,
   expanded,
   selected,
   over,
@@ -69,8 +74,10 @@ function CategoryRow({
   onToggle,
   onSelect,
   onEdit,
+  onDelete,
 }: RowProps) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [draftLabelJa, setDraftLabelJa] = useState(category.labelJa);
   const [draftLabelEn, setDraftLabelEn] = useState(category.labelEn);
   const [labelInvalid, setLabelInvalid] = useState(false);
@@ -110,12 +117,14 @@ function CategoryRow({
     setDraftLabelJa(category.labelJa);
     setDraftLabelEn(category.labelEn);
     setLabelInvalid(false);
+    setConfirmingDelete(false);
     setEditing(true);
   };
   const cancelEditing = () => {
     setDraftLabelJa(category.labelJa);
     setDraftLabelEn(category.labelEn);
     setLabelInvalid(false);
+    setConfirmingDelete(false);
     setEditing(false);
   };
   const saveEditing = () => {
@@ -165,42 +174,74 @@ function CategoryRow({
         {category.level === "major" ? "大" : category.level === "medium" ? "中" : "小"}
       </span>
       {editing ? (
-        <span className="category-inline-editor" onClick={(event) => event.stopPropagation()}>
-          <input
-            ref={labelInputRef}
-            className="inline-category-ja"
-            value={draftLabelJa}
-            aria-label={`${category.labelJa}のカテゴリ名`}
-            aria-invalid={labelInvalid}
-            onChange={(event) => {
-              setDraftLabelJa(event.target.value);
-              if (event.target.value.trim()) setLabelInvalid(false);
-            }}
-            onKeyDown={handleEditorKeyDown}
-          />
-          <input
-            className="inline-category-en"
-            value={draftLabelEn}
-            aria-label={`${category.labelJa}の英語名`}
-            onChange={(event) => setDraftLabelEn(event.target.value)}
-            onKeyDown={handleEditorKeyDown}
-          />
-          <button
-            className="inline-edit-save"
-            type="button"
-            aria-label={`${category.labelJa}の変更を保存`}
-            onClick={saveEditing}
-          >
-            <Check />
-          </button>
-          <button
-            className="inline-edit-cancel"
-            type="button"
-            aria-label={`${category.labelJa}の変更をキャンセル`}
-            onClick={cancelEditing}
-          >
-            <X />
-          </button>
+        <span
+          className={`category-inline-editor ${confirmingDelete ? "is-delete-confirming" : ""}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {confirmingDelete ? (
+            <span className="inline-delete-confirmation" role="group" aria-label={`${category.labelJa}を削除`}>
+              <Trash2 aria-hidden="true" />
+              <span>
+                <strong>{category.labelJa}を削除</strong>
+                <small>
+                  {descendantCount > 0 ? `配下${descendantCount}分類・` : ""}
+                  {count}タグも削除 / 元に戻せます
+                </small>
+              </span>
+              <button className="inline-delete-confirm" type="button" onClick={onDelete}>
+                削除する
+              </button>
+              <button className="inline-delete-back" type="button" onClick={() => setConfirmingDelete(false)}>
+                戻る
+              </button>
+            </span>
+          ) : (
+            <>
+              <input
+                ref={labelInputRef}
+                className="inline-category-ja"
+                value={draftLabelJa}
+                aria-label={`${category.labelJa}のカテゴリ名`}
+                aria-invalid={labelInvalid}
+                onChange={(event) => {
+                  setDraftLabelJa(event.target.value);
+                  if (event.target.value.trim()) setLabelInvalid(false);
+                }}
+                onKeyDown={handleEditorKeyDown}
+              />
+              <input
+                className="inline-category-en"
+                value={draftLabelEn}
+                aria-label={`${category.labelJa}の英語名`}
+                onChange={(event) => setDraftLabelEn(event.target.value)}
+                onKeyDown={handleEditorKeyDown}
+              />
+              <button
+                className="inline-edit-save"
+                type="button"
+                aria-label={`${category.labelJa}の変更を保存`}
+                onClick={saveEditing}
+              >
+                <Check />
+              </button>
+              <button
+                className="inline-edit-cancel"
+                type="button"
+                aria-label={`${category.labelJa}の変更をキャンセル`}
+                onClick={cancelEditing}
+              >
+                <X />
+              </button>
+              <button
+                className="inline-edit-delete"
+                type="button"
+                aria-label={`${category.labelJa}を削除`}
+                onClick={() => setConfirmingDelete(true)}
+              >
+                <Trash2 />
+              </button>
+            </>
+          )}
         </span>
       ) : (
         <>
@@ -264,6 +305,13 @@ export function CategoryTree(props: TreeProps) {
         .reduce((sum, child) => sum + count(child.id), 0);
     return new Map(props.categories.map((category) => [category.id, count(category.id)]));
   }, [props.categories, props.tags]);
+  const descendantCount = useMemo(() => {
+    const count = (id: string): number => {
+      const children = props.categories.filter((item) => item.parentId === id);
+      return children.length + children.reduce((sum, child) => sum + count(child.id), 0);
+    };
+    return new Map(props.categories.map((category) => [category.id, count(category.id)]));
+  }, [props.categories]);
   const majors = sortedChildren(props.categories, "", "major");
   const matches = (category: CategoryNode) =>
     !query || `${category.labelJa} ${category.labelEn} ${category.id}`.toLocaleLowerCase().includes(query);
@@ -282,6 +330,7 @@ export function CategoryTree(props: TreeProps) {
         color={color}
         depth={depth}
         count={tagCount.get(category.id) ?? 0}
+        descendantCount={descendantCount.get(category.id) ?? 0}
         expanded={expanded}
         selected={category.id === props.selectedMediumId}
         over={category.id === props.overCategoryId}
@@ -293,6 +342,13 @@ export function CategoryTree(props: TreeProps) {
         onToggle={() => props.onToggle(category.id)}
         onSelect={() => category.level === "medium" && props.onSelectMedium(category.id)}
         onEdit={(labelJa, labelEn) => props.onEditCategory(category, labelJa, labelEn)}
+        onDelete={() =>
+          props.onDeleteCategory(
+            category,
+            descendantCount.get(category.id) ?? 0,
+            tagCount.get(category.id) ?? 0,
+          )
+        }
       />,
     ];
     if (expanded) for (const child of children) rows.push(...renderBranch(child, depth + 1, color));

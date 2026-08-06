@@ -231,6 +231,11 @@ button:disabled {
   color: oklch(0.78 0.16 28);
   border-color: oklch(0.45 0.11 28);
 }
+.danger-button:hover:not(:disabled) {
+  color: oklch(0.88 0.12 28);
+  border-color: var(--danger);
+  background: color-mix(in oklch, var(--danger) 14%, var(--surface-1));
+}
 .search-control {
   display: flex;
   align-items: center;
@@ -462,7 +467,7 @@ button:disabled {
 .category-inline-editor {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(54px, 1fr) minmax(48px, 0.8fr) 24px 24px;
+  grid-template-columns: minmax(54px, 1fr) minmax(48px, 0.8fr) 24px 24px 24px;
   align-items: center;
   gap: 4px;
 }
@@ -787,7 +792,7 @@ button:disabled {
   grid-column: 6;
 }
 .tag-row.is-editing {
-  grid-template-columns: 22px minmax(52px, 1.05fr) minmax(52px, 0.95fr) 24px 24px;
+  grid-template-columns: 22px minmax(52px, 1.05fr) minmax(52px, 0.95fr) 24px 24px 24px;
   gap: 4px;
   padding-block: 4px;
   background: color-mix(in oklch, var(--accent) 12%, var(--surface-1));
@@ -804,6 +809,9 @@ button:disabled {
 }
 .tag-row.is-editing > .inline-edit-cancel {
   grid-column: 5;
+}
+.tag-row.is-editing > .inline-edit-delete {
+  grid-column: 6;
 }
 .inline-tag-prompt,
 .inline-tag-translation {
@@ -841,7 +849,8 @@ button:disabled {
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--danger) 22%, transparent);
 }
 .inline-edit-save,
-.inline-edit-cancel {
+.inline-edit-cancel,
+.inline-edit-delete {
   width: 24px;
   height: 24px;
   display: grid;
@@ -855,15 +864,91 @@ button:disabled {
   border-color: color-mix(in oklch, var(--accent) 65%, var(--line));
   color: var(--accent);
 }
+.inline-edit-delete {
+  border-color: color-mix(in oklch, var(--danger) 58%, var(--line));
+  color: oklch(0.78 0.16 28);
+}
 .inline-edit-save:hover,
-.inline-edit-cancel:hover {
+.inline-edit-cancel:hover,
+.inline-edit-delete:hover {
   background: color-mix(in oklch, var(--accent) 12%, var(--surface-1));
   color: var(--ink);
 }
 .inline-edit-save svg,
-.inline-edit-cancel svg {
+.inline-edit-cancel svg,
+.inline-edit-delete svg {
   width: 14px;
   height: 14px;
+}
+.inline-delete-confirmation {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  color: oklch(0.82 0.14 28);
+}
+.category-inline-editor.is-delete-confirming {
+  display: block;
+}
+.category-inline-editor.is-delete-confirming .inline-delete-confirmation {
+  width: 100%;
+}
+.tag-inline-delete-confirmation {
+  grid-column: 2 / 7;
+}
+.inline-delete-confirmation > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.inline-delete-confirmation strong,
+.inline-delete-confirmation small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-delete-confirmation strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+.inline-delete-confirmation small {
+  color: var(--muted);
+  font-size: 9px;
+}
+.inline-delete-confirm,
+.inline-delete-back {
+  min-height: 25px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.inline-delete-confirm {
+  color: oklch(0.9 0.08 28);
+  border-color: var(--danger);
+  background: color-mix(in oklch, var(--danger) 20%, var(--surface-1));
+  font-weight: 750;
+}
+.inline-delete-back {
+  color: var(--muted);
+}
+.bulk-delete-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.bulk-delete-control.is-confirming {
+  padding-inline-start: 7px;
+  border-inline-start: 1px solid var(--line);
+}
+.bulk-delete-control > span {
+  color: oklch(0.82 0.14 28);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.bulk-delete-control button {
+  min-height: 28px;
+  padding: 4px 7px;
 }
 .tag-row.is-drop-before::before {
   content: "";
