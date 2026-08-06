@@ -308,10 +308,13 @@ interface LaneProps {
   onSelectAll: (uids: string[]) => void;
   onEdit: TagRowProps["onEdit"];
   onDelete: TagRowProps["onDelete"];
-  onAdd: (categoryId: string) => void;
+  onAdd: (categoryId: string, values: string[]) => void;
 }
 
 export function KanbanLane(props: LaneProps) {
+  const [adding, setAdding] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
+  const tagInputRef = useRef<HTMLTextAreaElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const droppable = useDroppable({
     id: `lane:${props.category.id}`,
@@ -349,10 +352,20 @@ export function KanbanLane(props: LaneProps) {
   const visibleIds = visible.map((tag) => tag.uid);
   const allSelected = visibleIds.length > 0 && visibleIds.every((uid) => props.selectedIds.has(uid));
   const showEndTarget = props.dragActive && (droppable.isOver || endDroppable.isOver);
+  const tagsToAdd = tagDraft.split(/[\n,]/u).map((value) => value.trim()).filter(Boolean);
+  const closeAddForm = () => {
+    setAdding(false);
+    setTagDraft("");
+  };
+  const submitTags = () => {
+    if (!tagsToAdd.length) return;
+    props.onAdd(props.category.id, tagsToAdd);
+    closeAddForm();
+  };
   return (
     <section
       ref={droppable.setNodeRef}
-      className={`kanban-lane lane-color-${props.laneIndex % 4} ${props.focused ? "is-focused" : ""} ${props.deemphasized ? "is-deemphasized" : ""} ${droppable.isOver || endDroppable.isOver ? "is-over" : ""}`}
+      className={`kanban-lane lane-color-${props.laneIndex % 4} ${adding ? "has-add-form" : ""} ${props.focused ? "is-focused" : ""} ${props.deemphasized ? "is-deemphasized" : ""} ${droppable.isOver || endDroppable.isOver ? "is-over" : ""}`}
       aria-label={`${props.category.labelJa}のタグ`}
     >
       <header className="lane-header">
@@ -373,10 +386,62 @@ export function KanbanLane(props: LaneProps) {
           <span className={`select-box ${allSelected ? "checked" : ""}`}>{allSelected && <Check />}</span>
           表示中を全選択
         </button>
-        <button type="button" onClick={() => props.onAdd(props.category.id)}>
-          タグ追加
+        <button
+          type="button"
+          onClick={() => {
+            if (adding) closeAddForm();
+            else {
+              setAdding(true);
+              requestAnimationFrame(() => tagInputRef.current?.focus());
+            }
+          }}
+          aria-expanded={adding}
+        >
+          {adding ? "閉じる" : "タグ追加"}
         </button>
       </div>
+      {adding && (
+        <form
+          className="tag-add-form add-form"
+          aria-label={`${props.category.labelJa}にタグを追加`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitTags();
+          }}
+          onKeyDown={(event) => event.key === "Escape" && closeAddForm()}
+        >
+          <div className="add-form-heading">
+            <div>
+              <strong>「{props.category.labelJa}」に追加</strong>
+              <span>プロンプトで使う英語タグを入力</span>
+            </div>
+            <button className="icon-button" type="button" onClick={closeAddForm} aria-label="タグ追加を閉じる">
+              <X />
+            </button>
+          </div>
+          <label className="add-form-field">
+            <span>タグ名</span>
+            <textarea
+              ref={tagInputRef}
+              value={tagDraft}
+              onChange={(event) => setTagDraft(event.target.value)}
+              placeholder={"例：long_hair\nponytail\nbraided_hair"}
+              aria-label={`${props.category.labelJa}に追加するタグ名`}
+              rows={4}
+            />
+          </label>
+          <div className="tag-add-summary" aria-live="polite">
+            {tagsToAdd.length > 0 ? `${tagsToAdd.length}件のタグを追加します` : "1行に1件ずつ入力できます"}
+          </div>
+          <div className="add-form-actions">
+            <button type="button" onClick={closeAddForm}>キャンセル</button>
+            <button className="primary-button" type="submit" disabled={!tagsToAdd.length}>
+              <CirclePlus />
+              {tagsToAdd.length > 0 ? `${tagsToAdd.length}件を追加` : "タグを追加"}
+            </button>
+          </div>
+        </form>
+      )}
       <div ref={parentRef} className="tag-list" role="listbox" aria-multiselectable="true">
         {visible.length === 0 ? (
           <div className="lane-empty">

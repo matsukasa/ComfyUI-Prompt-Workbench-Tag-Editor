@@ -56,7 +56,7 @@ import {
   validateCatalog,
 } from "./domain/catalog";
 import { sortedChildren } from "./domain/operations";
-import type { CategoryLevel, CategoryNode, TagOccurrence } from "./domain/types";
+import type { CategoryNode, TagOccurrence } from "./domain/types";
 import { demoDocument } from "./demoCatalog";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
 
@@ -608,29 +608,9 @@ export function App() {
       undoable: true,
     });
   };
-  const addTags = (categoryId: string) => {
-    const input = window.prompt("追加するタグを改行またはカンマ区切りで入力してください。");
-    if (!input) return;
-    store.createTags(categoryId, input.split(/[\n,]/u));
-  };
-  const addCategory = () => {
-    const level = window.prompt(
-      "分類レベルを入力してください: major / medium / small",
-      "small",
-    ) as CategoryLevel | null;
-    if (!level || !["major", "medium", "small"].includes(level)) return;
-    const parentId =
-      level === "major"
-        ? ""
-        : (window.prompt(
-            "親カテゴリID",
-            level === "small"
-              ? (store.selectedMediumId ?? "")
-              : (document.categories.find((item) => item.level === "major")?.id ?? ""),
-          ) ?? "");
-    const name = window.prompt("日本語カテゴリ名", "新しいカテゴリ");
-    if (name) store.createCategory(level, parentId, name);
-  };
+  const addTags = (categoryId: string, values: string[]) => store.createTags(categoryId, values);
+  const addCategory = (level: CategoryNode["level"], parentId: string, labelJa: string) =>
+    store.createCategory(level, parentId, labelJa);
 
   const selectedTags = document.tags.filter((tag) => selected.has(tag.uid));
   return (
@@ -815,6 +795,19 @@ export function App() {
               >
                 <Filter />
                 重複タグのみ
+              </button>
+              <button
+                type="button"
+                disabled={store.selectedTagIds.length === 0}
+                onClick={store.clearSelection}
+                aria-label={
+                  store.selectedTagIds.length > 0
+                    ? `選択中のタグ${store.selectedTagIds.length}件をすべて解除`
+                    : "選択をすべて解除"
+                }
+              >
+                <X />
+                選択をすべて解除
               </button>
               {store.selectedTagIds.length > 0 && (
                 <div className={`bulk-delete-control ${bulkDeleteArmed ? "is-confirming" : ""}`}>

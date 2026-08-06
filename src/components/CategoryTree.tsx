@@ -33,7 +33,7 @@ interface TreeProps {
   onSelectMedium: (id: string) => void;
   onEditCategory: (category: CategoryNode, labelJa: string, labelEn: string) => void;
   onDeleteCategory: (category: CategoryNode, descendantCount: number, tagCount: number) => void;
-  onAddCategory: () => void;
+  onAddCategory: (level: CategoryNode["level"], parentId: string, labelJa: string) => void;
   onExpandAll: (expanded: boolean) => void;
 }
 
@@ -290,6 +290,11 @@ function CategoryRow({
 }
 
 export function CategoryTree(props: TreeProps) {
+  const [adding, setAdding] = useState(false);
+  const [addLevel, setAddLevel] = useState<CategoryNode["level"]>("small");
+  const [addParentId, setAddParentId] = useState(props.selectedMediumId ?? "");
+  const [addLabelJa, setAddLabelJa] = useState("");
+  const addLabelInputRef = useRef<HTMLInputElement>(null);
   const { setNodeRef: setMajorLevelTargetRef, isOver: isOverMajorLevelTarget } = useDroppable({
     id: "category-level:major",
     data: { type: "category-level-target", targetLevel: "major" },
@@ -313,6 +318,43 @@ export function CategoryTree(props: TreeProps) {
     return new Map(props.categories.map((category) => [category.id, count(category.id)]));
   }, [props.categories]);
   const majors = sortedChildren(props.categories, "", "major");
+  const mediums = props.categories.filter((category) => category.level === "medium");
+  const parentOptions = addLevel === "medium" ? majors : mediums;
+  const levelLabels: Record<CategoryNode["level"], string> = {
+    major: "大分類",
+    medium: "中分類",
+    small: "小分類",
+  };
+  const openAddForm = () => {
+    const defaultLevel: CategoryNode["level"] = props.selectedMediumId ? "small" : "major";
+    setAddLevel(defaultLevel);
+    setAddParentId(
+      defaultLevel === "small" ? (props.selectedMediumId ?? mediums[0]?.id ?? "") : majors[0]?.id ?? "",
+    );
+    setAddLabelJa("");
+    setAdding(true);
+    requestAnimationFrame(() => addLabelInputRef.current?.focus());
+  };
+  const closeAddForm = () => {
+    setAdding(false);
+    setAddLabelJa("");
+  };
+  const changeAddLevel = (level: CategoryNode["level"]) => {
+    setAddLevel(level);
+    setAddParentId(
+      level === "major"
+        ? ""
+        : level === "medium"
+          ? (majors[0]?.id ?? "")
+          : (props.selectedMediumId ?? mediums[0]?.id ?? ""),
+    );
+  };
+  const submitAddCategory = () => {
+    const label = addLabelJa.trim();
+    if (!label || (addLevel !== "major" && !addParentId)) return;
+    props.onAddCategory(addLevel, addParentId, label);
+    closeAddForm();
+  };
   const matches = (category: CategoryNode) =>
     !query || `${category.labelJa} ${category.labelEn} ${category.id}`.toLocaleLowerCase().includes(query);
 
@@ -357,7 +399,7 @@ export function CategoryTree(props: TreeProps) {
 
   return (
     <aside
-      className={`category-sidebar ${props.dragMode === "tag" ? "is-tag-drag" : ""}`}
+      className={`category-sidebar ${adding ? "has-add-form" : ""} ${props.dragMode === "tag" ? "is-tag-drag" : ""}`}
       aria-label="カテゴリーツリー"
     >
       <div className="sidebar-heading">
@@ -368,12 +410,89 @@ export function CategoryTree(props: TreeProps) {
         <button
           className="icon-button"
           type="button"
-          onClick={props.onAddCategory}
+          onClick={() => (adding ? closeAddForm() : openAddForm())}
           aria-label="カテゴリを追加"
+          aria-expanded={adding}
         >
-          <CirclePlus />
+          {adding ? <X /> : <CirclePlus />}
         </button>
       </div>
+      {adding && (
+        <form
+          className="category-add-form add-form"
+          aria-label="カテゴリーを追加"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitAddCategory();
+          }}
+          onKeyDown={(event) => event.key === "Escape" && closeAddForm()}
+        >
+          <div className="add-form-heading">
+            <div>
+              <strong>カテゴリーを追加</strong>
+              <span>分類の種類と追加先を選んでください</span>
+            </div>
+          </div>
+          <fieldset className="category-level-picker">
+            <legend>分類の種類</legend>
+            {(["major", "medium", "small"] as const).map((level) => (
+              <label key={level} className={addLevel === level ? "is-selected" : ""}>
+                <input
+                  type="radio"
+                  name="category-level"
+                  value={level}
+                  checked={addLevel === level}
+                  onChange={() => changeAddLevel(level)}
+                />
+                <span>{levelLabels[level]}</span>
+              </label>
+            ))}
+          </fieldset>
+          {addLevel !== "major" && (
+            <label className="add-form-field">
+              <span>追加先</span>
+              <select
+                value={addParentId}
+                onChange={(event) => setAddParentId(event.target.value)}
+                aria-label={`${levelLabels[addLevel]}の追加先`}
+              >
+                {parentOptions.map((parent) => {
+                  const major =
+                    parent.level === "medium"
+                      ? props.categories.find((category) => category.id === parent.parentId)
+                      : null;
+                  return (
+                    <option key={parent.id} value={parent.id}>
+                      {major ? `${major.labelJa} › ` : ""}{parent.labelJa}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+          )}
+          <label className="add-form-field">
+            <span>日本語名</span>
+            <input
+              ref={addLabelInputRef}
+              value={addLabelJa}
+              onChange={(event) => setAddLabelJa(event.target.value)}
+              placeholder={`例：${addLevel === "major" ? "人物" : addLevel === "medium" ? "髪" : "髪型"}`}
+              aria-label="新しいカテゴリーの日本語名"
+            />
+          </label>
+          <div className="add-form-actions">
+            <button type="button" onClick={closeAddForm}>キャンセル</button>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={!addLabelJa.trim() || (addLevel !== "major" && !addParentId)}
+            >
+              <CirclePlus />
+              {levelLabels[addLevel]}を追加
+            </button>
+          </div>
+        </form>
+      )}
       <label className="search-control sidebar-search">
         <Search />
         <input
