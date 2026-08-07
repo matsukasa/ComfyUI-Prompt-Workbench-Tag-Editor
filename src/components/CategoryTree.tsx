@@ -533,21 +533,6 @@ export function CategoryTree(props: TreeProps) {
       <div className="category-tree" role="tree">
         {majors.flatMap((major, index) => renderBranch(major, 0, colors[index % colors.length]))}
       </div>
-      <div className="color-legend">
-        <strong>カラーレジェンド</strong>
-        <div>
-          <span className="legend-dot success" />
-          成功・完了 <span className="legend-dot selection" />
-          選択 <span className="legend-dot warning" />
-          注意
-        </div>
-        <div>
-          <span className="legend-level major" />
-          大分類 <span className="legend-level medium" />
-          中分類 <span className="legend-level small" />
-          小分類
-        </div>
-      </div>
     </aside>
   );
 }

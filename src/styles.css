@@ -563,9 +563,11 @@ button:disabled {
 .category-level-mark {
   width: 22px;
   height: 22px;
+  padding: 0;
   border-radius: 999px;
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
   background: color-mix(in oklch, var(--category-color) 70%, var(--surface-2));
   color: white;
   font-size: 10px;
@@ -659,52 +661,6 @@ button:disabled {
   padding: 4px 7px;
   border-radius: 5px;
 }
-.color-legend {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 10px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.9;
-}
-.color-legend strong {
-  color: var(--ink);
-  display: block;
-}
-.legend-dot,
-.legend-level {
-  width: 11px;
-  height: 11px;
-  display: inline-block;
-  margin-inline: 3px;
-  vertical-align: -1px;
-}
-.legend-dot {
-  border-radius: 999px;
-}
-.legend-dot.success {
-  background: var(--emerald);
-}
-.legend-dot.selection {
-  background: var(--cyan);
-}
-.legend-dot.warning {
-  background: var(--amber);
-}
-.legend-level {
-  border-radius: 3px;
-  border: 2px solid;
-}
-.legend-level.major {
-  border-color: var(--violet);
-}
-.legend-level.medium {
-  border-color: var(--cyan);
-}
-.legend-level.small {
-  border-color: var(--coral);
-}
-
 .kanban-workspace {
   min-width: 0;
   min-height: 0;
