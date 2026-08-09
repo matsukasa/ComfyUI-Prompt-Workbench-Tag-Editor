@@ -26,6 +26,7 @@ interface TagRowProps {
   onSelect: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   onEdit: (tag: TagOccurrence, prompt: string, translationJa: string) => void;
   onDelete: (tag: TagOccurrence) => void;
+  onMoveRequest: (tag: TagOccurrence, point: { x: number; y: number }) => void;
 }
 
 function TagRow({
@@ -38,6 +39,7 @@ function TagRow({
   onSelect,
   onEdit,
   onDelete,
+  onMoveRequest,
 }: TagRowProps) {
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -94,6 +96,12 @@ function TagRow({
       role="option"
       aria-selected={selected}
       tabIndex={0}
+      onContextMenu={(event) => {
+        if (editing && (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))
+          return;
+        event.preventDefault();
+        onMoveRequest(tag, { x: event.clientX, y: event.clientY });
+      }}
       onClick={(event) => {
         if (editing) return;
         onSelect(
@@ -104,6 +112,12 @@ function TagRow({
       }}
       onKeyDown={(event) => {
         if (editing) return;
+        if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          onMoveRequest(tag, { x: rect.left + Math.min(rect.width * 0.72, rect.width - 12), y: rect.top + rect.height / 2 });
+          return;
+        }
         if (event.key === " " || event.key === "Enter") {
           event.preventDefault();
           onSelect(
@@ -308,6 +322,7 @@ interface LaneProps {
   onSelectAll: (uids: string[]) => void;
   onEdit: TagRowProps["onEdit"];
   onDelete: TagRowProps["onDelete"];
+  onMoveRequest: TagRowProps["onMoveRequest"];
   onAdd: (categoryId: string, values: string[]) => void;
 }
 
@@ -461,6 +476,7 @@ export function KanbanLane(props: LaneProps) {
               onSelect={props.onSelect}
               onEdit={props.onEdit}
               onDelete={props.onDelete}
+              onMoveRequest={props.onMoveRequest}
             />
           ))
         ) : (
@@ -488,6 +504,7 @@ export function KanbanLane(props: LaneProps) {
                     onSelect={props.onSelect}
                     onEdit={props.onEdit}
                     onDelete={props.onDelete}
+                    onMoveRequest={props.onMoveRequest}
                   />
                 </div>
               );

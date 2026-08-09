@@ -25,6 +25,7 @@ import {
   Filter,
   FolderOpen,
   Moon,
+  MoveRight,
   Redo2,
   Save,
   Search,
@@ -37,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   createDragSoundController,
   readDragSoundPreference,
@@ -55,7 +57,7 @@ import {
   summarizeChanges,
   validateCatalog,
 } from "./domain/catalog";
-import { sortedChildren } from "./domain/operations";
+import { categoryPath, sortedChildren } from "./domain/operations";
 import type { CategoryNode, TagOccurrence } from "./domain/types";
 import { demoDocument } from "./demoCatalog";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
@@ -81,6 +83,12 @@ interface TrailVector {
   x: number;
   y: number;
   visible: boolean;
+}
+
+interface MoveMenuState {
+  tagIds: string[];
+  x: number;
+  y: number;
 }
 
 type SaveMode = "overwrite" | "saveAs";
@@ -174,6 +182,7 @@ function useKeyboardShortcuts(): void {
 
 export function App() {
   const store = useCatalogStore();
+  const appShellRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -189,6 +198,11 @@ export function App() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [trailVector, setTrailVector] = useState<TrailVector>({ x: 0, y: 0, visible: false });
   const [recentlyMovedTagIds, setRecentlyMovedTagIds] = useState<string[]>([]);
+  const [moveMenu, setMoveMenu] = useState<MoveMenuState | null>(null);
+  const [moveDestinationQuery, setMoveDestinationQuery] = useState("");
+  const [pendingRevealTagId, setPendingRevealTagId] = useState<string | null>(null);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const moveSearchRef = useRef<HTMLInputElement>(null);
   const previousDragDelta = useRef({ x: 0, y: 0 });
   const pendingTrailVector = useRef({ x: 0, y: 0 });
   const trailFrame = useRef<number | null>(null);
@@ -311,6 +325,59 @@ export function App() {
       (category) => category.id === overCategoryId && category.level === "small",
     );
   }, [activeDrag, document, overCategoryId]);
+  const normalizedGlobalQuery = store.globalQuery.trim().toLocaleLowerCase();
+  const globalSearchResults = useMemo(() => {
+    if (!document || !normalizedGlobalQuery) return [];
+    return document.tags.filter((tag) => {
+      const matches = `${tag.prompt} ${tag.translationJa} ${tag.aliases.join(" ")}`
+        .toLocaleLowerCase()
+        .includes(normalizedGlobalQuery);
+      return (
+        matches &&
+        (!store.showDuplicatesOnly ||
+          (duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0) > 1) &&
+        (!store.showSelectedOnly || selected.has(tag.uid))
+      );
+    });
+  }, [document, duplicateCounts, normalizedGlobalQuery, selected, store.showDuplicatesOnly, store.showSelectedOnly]);
+  const smallCategoryDestinations = useMemo(() => {
+    if (!document) return [];
+    const query = moveDestinationQuery.trim().toLocaleLowerCase();
+    return document.categories
+      .filter((category) => category.level === "small")
+      .map((category) => ({ category, path: categoryPath(document.categories, category.id) }))
+      .filter(({ path }) => !query || path.some((category) => `${category.labelJa} ${category.labelEn}`.toLocaleLowerCase().includes(query)))
+      .sort((left, right) => left.path.map((item) => item.order).join(".").localeCompare(right.path.map((item) => item.order).join(".")));
+  }, [document, moveDestinationQuery]);
+
+  useEffect(() => {
+    if (!moveMenu) return;
+    moveSearchRef.current?.focus();
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!moveMenuRef.current?.contains(event.target as Node)) setMoveMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoveMenu(null);
+    };
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moveMenu]);
+
+  useEffect(() => {
+    if (!pendingRevealTagId || normalizedGlobalQuery) return;
+    const timer = window.setTimeout(() => {
+      const row = window.document.querySelector<HTMLElement>(`[data-tag-id="${CSS.escape(pendingRevealTagId)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+      row.focus({ preventScroll: true });
+      setPendingRevealTagId(null);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [normalizedGlobalQuery, pendingRevealTagId, store.selectedMediumId]);
 
   if (!document || !baseline) return <main className="loading-screen">カタログを準備しています…</main>;
 
@@ -446,6 +513,44 @@ export function App() {
     if (!scroller) return;
     scroller.scrollBy({ left: direction * Math.max(scroller.clientWidth * 0.8, 280), behavior: "smooth" });
   };
+  const showMoveMenu = (tag: TagOccurrence, point: { x: number; y: number }) => {
+    const tagIds = selected.has(tag.uid) ? [...store.selectedTagIds] : [tag.uid];
+    if (!selected.has(tag.uid)) store.selectTag(tag.uid, "single", [tag.uid]);
+    setMoveDestinationQuery("");
+    setMoveMenu({
+      tagIds,
+      x: Math.max(8, Math.min(point.x, window.innerWidth - 376)),
+      y: Math.max(8, Math.min(point.y, window.innerHeight - 436)),
+    });
+  };
+  const moveTagsFromMenu = (target: CategoryNode) => {
+    if (!moveMenu) return;
+    store.selectMany(moveMenu.tagIds);
+    store.applyTagMove(target.id);
+    setRecentlyMovedTagIds(moveMenu.tagIds);
+    if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
+    recentMoveTimer.current = window.setTimeout(() => setRecentlyMovedTagIds([]), 600);
+    setToast({
+      message: "タグを移動しました",
+      detail: `${moveMenu.tagIds.length}件を ${target.labelJa} の末尾へ移動`,
+      undoable: true,
+    });
+    setMoveMenu(null);
+  };
+  const revealSearchResult = (tag: TagOccurrence) => {
+    const path = categoryPath(document.categories, tag.categoryId);
+    const major = path.find((category) => category.level === "major");
+    const medium = path.find((category) => category.level === "medium");
+    if (major) store.toggleExpanded(major.id, true);
+    if (medium) {
+      store.toggleExpanded(medium.id, true);
+      store.setSelectedMedium(medium.id);
+    }
+    store.setDuplicateFilter(false);
+    store.selectTag(tag.uid, "single", [tag.uid]);
+    setPendingRevealTagId(tag.uid);
+    store.setGlobalQuery("");
+  };
   const onDragStart = (event: DragStartEvent) => {
     const type = event.active.data.current?.type;
     const id =
@@ -515,6 +620,12 @@ export function App() {
       const category = document.categories.find((item) => item.id === categoryId);
       if (category && category.level !== "small") store.toggleExpanded(category.id, true);
     }
+    if (activeType === "category" && categoryId) {
+      const activeCategory = document.categories.find((item) => item.id === activeId);
+      if (activeCategory?.level === "medium" && target?.level === "major") {
+        store.toggleExpanded(target.id, true);
+      }
+    }
   };
   const onDragEnd = (event: DragEndEvent) => {
     const activeType = event.active.data.current?.type;
@@ -562,7 +673,13 @@ export function App() {
             message:
               activeCategory?.level === "major" && overCategory?.level === "medium"
                 ? "大分類を中分類へ変更しました"
+                : activeCategory?.level === "medium" && overCategory?.level === "major"
+                  ? "中分類を移動しました"
                 : "カテゴリ階層を更新しました",
+            detail:
+              activeCategory?.level === "medium" && overCategory?.level === "major"
+                ? `${activeCategory.labelJa} を ${overCategory.labelJa} の末尾へ移動`
+                : undefined,
           });
           successful = true;
         }
@@ -614,7 +731,7 @@ export function App() {
 
   const selectedTags = document.tags.filter((tag) => selected.has(tag.uid));
   return (
-    <div className={`app-shell theme-${theme}`}>
+    <div ref={appShellRef} className={`app-shell theme-${theme}`}>
       <header className="app-toolbar">
         <div className="app-title">
           <FileJson />
@@ -837,7 +954,7 @@ export function App() {
               <span className="workspace-status">
                 {document.tags.length.toLocaleString()} タグ / {document.categories.length} カテゴリ
               </span>
-              {smallCategories.length > 4 && (
+              {!normalizedGlobalQuery && smallCategories.length > 4 && (
                 <div className="lane-navigation" aria-label="小分類レーンの横移動">
                   <span>小分類 {smallCategories.length}件</span>
                   <button type="button" onClick={() => scrollLanes(-1)} aria-label="小分類を左へスクロール">
@@ -849,7 +966,54 @@ export function App() {
                 </div>
               )}
             </div>
-            {smallCategories.length ? (
+            {normalizedGlobalQuery ? (
+              <section className="global-search-results" aria-label="全タグの検索結果">
+                <header>
+                  <div>
+                    <strong>全タグの検索結果</strong>
+                    <span>「{store.globalQuery.trim()}」に {globalSearchResults.length.toLocaleString()}件</span>
+                  </div>
+                  <span>タグを選ぶと元の分類へ移動します</span>
+                </header>
+                {globalSearchResults.length ? (
+                  <div className="global-search-list" aria-label="一致したタグ">
+                    {globalSearchResults.map((tag) => {
+                      const path = categoryPath(document.categories, tag.categoryId);
+                      return (
+                        <button
+                          key={tag.uid}
+                          className={`global-search-row ${selected.has(tag.uid) ? "is-selected" : ""}`}
+                          type="button"
+                          data-tag-id={tag.uid}
+                          onClick={() => revealSearchResult(tag)}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            showMoveMenu(tag, { x: event.clientX, y: event.clientY });
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+                              event.preventDefault();
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              showMoveMenu(tag, { x: rect.right - 24, y: rect.top + rect.height / 2 });
+                            }
+                          }}
+                        >
+                          <span className="global-result-prompt">{tag.prompt}</span>
+                          <span className="global-result-translation">{tag.translationJa || "—"}</span>
+                          <span className="global-result-path">{path.map((category) => category.labelJa).join(" > ")}</span>
+                          <ChevronRight aria-hidden="true" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="workspace-empty">
+                    <strong>一致するタグがありません</strong>
+                    <p>タグ名、日本語訳、エイリアスを変えて検索してください。</p>
+                  </div>
+                )}
+              </section>
+            ) : smallCategories.length ? (
               <div
                 ref={laneScroller}
                 className={`kanban-grid ${focusedCategoryId ? "has-focus" : ""}`}
@@ -876,6 +1040,7 @@ export function App() {
                     onSelectAll={store.selectMany}
                     onEdit={editTag}
                     onDelete={(tag) => deleteTags([tag.uid])}
+                    onMoveRequest={showMoveMenu}
                     onAdd={addTags}
                   />
                 ))}
@@ -913,6 +1078,50 @@ export function App() {
           )}
         </DragOverlay>
       </DndContext>
+      {moveMenu && createPortal(
+        <div
+          ref={moveMenuRef}
+          className="tag-move-menu"
+          role="dialog"
+          aria-label={`${moveMenu.tagIds.length}件のタグの移動先を選択`}
+          style={{ left: moveMenu.x, top: moveMenu.y }}
+        >
+          <header>
+            <span><MoveRight aria-hidden="true" /></span>
+            <div>
+              <strong>{moveMenu.tagIds.length}件のタグを移動</strong>
+              <small>移動先の小分類を選択</small>
+            </div>
+            <button type="button" onClick={() => setMoveMenu(null)} aria-label="移動先選択を閉じる"><X /></button>
+          </header>
+          <label className="search-control tag-move-search">
+            <Search />
+            <input
+              ref={moveSearchRef}
+              value={moveDestinationQuery}
+              onChange={(event) => setMoveDestinationQuery(event.target.value)}
+              placeholder="大・中・小分類を検索"
+              aria-label="移動先の分類を検索"
+            />
+          </label>
+          <div className="tag-move-destinations" role="listbox" aria-label="移動先の小分類">
+            {smallCategoryDestinations.length ? smallCategoryDestinations.map(({ category, path }) => (
+              <button
+                key={category.id}
+                type="button"
+                role="option"
+                aria-selected="false"
+                onClick={() => moveTagsFromMenu(category)}
+              >
+                <span>{path.map((item) => item.labelJa).join(" > ")}</span>
+                <MoveRight aria-hidden="true" />
+              </button>
+            )) : <p>一致する小分類がありません</p>}
+          </div>
+          <footer>選択した小分類の末尾へ移動します</footer>
+        </div>,
+        appShellRef.current ?? window.document.body,
+      )}
       {store.error && (
         <div className="error-toast" role="alert">
           <AlertTriangle />

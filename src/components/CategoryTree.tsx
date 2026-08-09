@@ -6,6 +6,7 @@ import {
   CirclePlus,
   GripVertical,
   History,
+  MoveRight,
   Search,
   Tags,
   Trash2,
@@ -276,6 +277,15 @@ function CategoryRow({
           ここへ移動
         </span>
       )}
+      {dragMode === "category" &&
+        activeCategoryLevel === "medium" &&
+        category.level === "major" &&
+        (over || droppable.isOver) && (
+          <span className="drop-copy">
+            <MoveRight />
+            この大分類の中へ移動
+          </span>
+        )}
       {dragMode === "category" &&
         activeCategoryLevel === "major" &&
         category.level === "medium" &&
