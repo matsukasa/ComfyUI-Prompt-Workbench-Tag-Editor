@@ -54,7 +54,7 @@ select:focus-visible,
   --sky: oklch(0.72 0.15 235);
   --magenta: oklch(0.7 0.18 335);
   --amber: oklch(0.78 0.16 82);
-  --tag-prompt-ink: oklch(0.88 0.07 205);
+  --tag-prompt-ink: oklch(0.9 0.05 295);
   --tag-translation-ink: oklch(0.82 0.13 76);
   --danger: oklch(0.67 0.2 28);
   background: var(--bg);
@@ -75,7 +75,7 @@ select:focus-visible,
   --ink: oklch(0.24 0.024 248);
   --muted: oklch(0.43 0.025 248);
   --subtle: oklch(0.52 0.02 248);
-  --tag-prompt-ink: oklch(0.39 0.11 215);
+  --tag-prompt-ink: oklch(0.38 0.09 295);
   --tag-translation-ink: oklch(0.43 0.12 62);
 }
 
