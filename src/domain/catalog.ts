@@ -400,11 +400,13 @@ export function summarizeChanges(before: CatalogDocument, after: CatalogDocument
   for (const [uid, tag] of afterTags) {
     const previous = beforeTags.get(uid);
     if (!previous) continue;
-    if (previous.categoryId !== tag.categoryId || previous.order !== tag.order) movedTags++;
+    if (previous.categoryId !== tag.categoryId) movedTags++;
     if (previous.prompt !== tag.prompt || previous.translationJa !== tag.translationJa) renamedTags++;
   }
   const beforeCategories = new Map(before.categories.map((item) => [item.id, item]));
-  let changedCategories = Math.abs(before.categories.length - after.categories.length);
+  const afterCategories = new Map(after.categories.map((item) => [item.id, item]));
+  let changedCategories = [...afterCategories.keys()].filter((key) => !beforeCategories.has(key)).length;
+  changedCategories += [...beforeCategories.keys()].filter((key) => !afterCategories.has(key)).length;
   for (const category of after.categories) {
     const previous = beforeCategories.get(category.id);
     if (

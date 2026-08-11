@@ -42,7 +42,7 @@ export function PreviewDialog({ open, mode, fileName, summary, issues, saving, o
         <div className="preview-summary">
           <div>
             <strong>{summary.movedTags}</strong>
-            <span>移動</span>
+            <span>タグ所属変更</span>
           </div>
           <div>
             <strong>{summary.addedTags}</strong>
@@ -58,7 +58,7 @@ export function PreviewDialog({ open, mode, fileName, summary, issues, saving, o
           </div>
           <div>
             <strong>{summary.changedCategories}</strong>
-            <span>カテゴリ変更</span>
+            <span>分類編集</span>
           </div>
           <div>
             <strong>
