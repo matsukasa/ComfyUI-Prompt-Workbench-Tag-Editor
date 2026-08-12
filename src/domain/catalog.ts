@@ -193,12 +193,13 @@ export function parseCatalogText(source: string, fileName = "catalog.json"): Cat
   throw new Error("対応していない形式です。Prompt Workbenchの同梱またはユーザーカタログを選んでください。");
 }
 
-export async function parseCatalogFile(file: File): Promise<CatalogDocument> {
+export async function parseCatalogFile(file: File, filePath?: string): Promise<CatalogDocument> {
   if (!file.name.toLowerCase().endsWith(".json")) throw new Error("対応形式はJSON（.json）のみです。");
   if (file.size > 8 * 1024 * 1024) throw new Error("ファイルが8MBを超えています。");
   const bytes = await file.arrayBuffer();
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  return parseCatalogText(source, file.name);
+  const document = parseCatalogText(source, file.name);
+  return filePath ? { ...document, filePath } : document;
 }
 
 function updateBundledCategory(category: CategoryNode, children: JsonObject[] | undefined): JsonObject {

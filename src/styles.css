@@ -121,6 +121,12 @@ svg {
   padding-left: 12px;
   border-left: 1px solid var(--line);
 }
+.current-file-path {
+  direction: ltr;
+  max-width: min(50vw, 720px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .unsaved {
   display: inline-flex;
   align-items: center;

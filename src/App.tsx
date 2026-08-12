@@ -101,9 +101,18 @@ interface CatalogWritable {
 
 interface CatalogFileHandle {
   name: string;
+  displayPath?: string;
+  path?: string;
+  fullPath?: string;
   getFile: () => Promise<File>;
   createWritable: () => Promise<CatalogWritable>;
 }
+
+type CatalogFileWithPath = File & {
+  path?: string;
+  fullPath?: string;
+  webkitRelativePath?: string;
+};
 
 interface CatalogPickerOptions {
   id: string;
@@ -128,6 +137,15 @@ const CATALOG_FILE_PICKER_TYPES = [
     accept: { "application/json": [".json"] },
   },
 ];
+
+function catalogHandlePath(handle: CatalogFileHandle | null): string | undefined {
+  return handle?.displayPath ?? handle?.fullPath ?? handle?.path;
+}
+
+function catalogFilePath(file: File, handle: CatalogFileHandle | null): string | undefined {
+  const fileWithPath = file as CatalogFileWithPath;
+  return catalogHandlePath(handle) ?? fileWithPath.fullPath ?? fileWithPath.path ?? fileWithPath.webkitRelativePath;
+}
 
 function downloadFile(
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
@@ -400,7 +418,7 @@ export function App() {
   const loadSelectedFile = async (file?: File, fileHandle: CatalogFileHandle | null = null) => {
     if (!file) return;
     try {
-      const parsed = await parseCatalogFile(file);
+      const parsed = await parseCatalogFile(file, catalogFilePath(file, fileHandle));
       store.load(parsed);
       setCurrentCatalogFileHandle(fileHandle);
       setToast({ message: `${file.name} を読み込みました` });
@@ -445,7 +463,7 @@ export function App() {
         const savedFileHandle = await catalogWindow.showSaveFilePicker(pickerOptions);
         await writeCatalogFile(savedFileHandle, document);
         setCurrentCatalogFileHandle(savedFileHandle);
-        store.markSaved(savedFileHandle.name);
+        store.markSaved(savedFileHandle.name, catalogHandlePath(savedFileHandle));
         setToast({ message: `${savedFileHandle.name} に別名保存しました` });
       } else {
         downloadFile(document, outputName);
@@ -494,7 +512,7 @@ export function App() {
     try {
       await writeCatalogFile(overwriteHandle, document);
       setCurrentCatalogFileHandle(overwriteHandle);
-      store.markSaved(overwriteHandle.name);
+      store.markSaved(overwriteHandle.name, catalogHandlePath(overwriteHandle) ?? document.filePath);
       setSaveMode(null);
       setToast({ message: `${overwriteHandle.name} を上書き保存しました` });
     } catch (error) {
@@ -736,7 +754,9 @@ export function App() {
         <div className="app-title">
           <FileJson />
           <strong>ComfyUI Prompt Workbench Tag Editor</strong>
-          <span>{document.fileName}</span>
+          <span className="current-file-path" title={document.filePath ?? document.fileName}>
+            {document.filePath ?? document.fileName}
+          </span>
           {dirty && (
             <span className="unsaved">
               <AlertTriangle />

@@ -37,6 +37,7 @@ export interface TagOccurrence {
 
 export interface CatalogDocument {
   fileName: string;
+  filePath?: string;
   format: SourceFormat;
   formatMeta: FormatMetadata;
   original: JsonObject;
