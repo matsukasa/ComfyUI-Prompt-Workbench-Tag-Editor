@@ -361,11 +361,19 @@ export function App() {
   const smallCategoryDestinations = useMemo(() => {
     if (!document) return [];
     const query = moveDestinationQuery.trim().toLocaleLowerCase();
-    return document.categories
-      .filter((category) => category.level === "small")
-      .map((category) => ({ category, path: categoryPath(document.categories, category.id) }))
-      .filter(({ path }) => !query || path.some((category) => `${category.labelJa} ${category.labelEn}`.toLocaleLowerCase().includes(query)))
-      .sort((left, right) => left.path.map((item) => item.order).join(".").localeCompare(right.path.map((item) => item.order).join(".")));
+    return sortedChildren(document.categories, "", "major").flatMap((major) =>
+      sortedChildren(document.categories, major.id, "medium").flatMap((medium) =>
+        sortedChildren(document.categories, medium.id, "small")
+          .map((category) => ({ category, path: [major, medium, category] }))
+          .filter(
+            ({ path }) =>
+              !query ||
+              path.some((category) =>
+                `${category.labelJa} ${category.labelEn}`.toLocaleLowerCase().includes(query),
+              ),
+          ),
+      ),
+    );
   }, [document, moveDestinationQuery]);
 
   useEffect(() => {
