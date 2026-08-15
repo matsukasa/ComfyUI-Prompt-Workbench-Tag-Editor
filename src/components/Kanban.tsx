@@ -9,11 +9,14 @@ import {
   MoveDown,
   PencilLine,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { favoriteTagKey } from "../domain/favorites";
 import type { CategoryNode, TagOccurrence } from "../domain/types";
 
 interface TagRowProps {
@@ -22,6 +25,7 @@ interface TagRowProps {
   duplicateCount: number;
   changeLabel?: string;
   recentlyMoved: boolean;
+  favorite: boolean;
   visibleIds: string[];
   onSelect: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   onEdit: (tag: TagOccurrence, prompt: string, translationJa: string) => void;
@@ -35,6 +39,7 @@ function TagRow({
   duplicateCount,
   changeLabel,
   recentlyMoved,
+  favorite,
   visibleIds,
   onSelect,
   onEdit,
@@ -63,6 +68,24 @@ function TagRow({
   useEffect(() => {
     if (editing) promptInputRef.current?.focus();
   }, [editing]);
+  const rowRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return undefined;
+    const suppressNativeContextMenu = (event: MouseEvent) => {
+      if (editing && (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = row.getBoundingClientRect();
+      onMoveRequest(tag, {
+        x: event.clientX || rect.left + Math.min(rect.width * 0.72, rect.width - 12),
+        y: event.clientY || rect.top + rect.height / 2,
+      });
+    };
+    row.addEventListener("contextmenu", suppressNativeContextMenu, { capture: true });
+    return () => row.removeEventListener("contextmenu", suppressNativeContextMenu, { capture: true });
+  }, [editing, onMoveRequest, tag]);
   const beginEditing = () => {
     setDraftPrompt(tag.prompt);
     setDraftTranslation(tag.translationJa);
@@ -88,20 +111,28 @@ function TagRow({
     setPromptInvalid(false);
     setEditing(false);
   };
+  const requestMoveMenu = (event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>) => {
+    if (editing && (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    onMoveRequest(tag, { x: event.clientX, y: event.clientY });
+  };
   return (
     <div
-      ref={setNodeRef}
-      className={`tag-row ${editing ? "is-editing" : ""} ${selected ? "is-selected" : ""} ${changeLabel ? "is-modified" : ""} ${recentlyMoved ? "is-recently-moved" : ""} ${droppable.isOver ? "is-drop-before" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
+      ref={(node) => {
+        rowRef.current = node;
+        setNodeRef(node);
+      }}
+      className={`tag-row ${editing ? "is-editing" : ""} ${selected ? "is-selected" : ""} ${changeLabel ? "is-modified" : ""} ${recentlyMoved ? "is-recently-moved" : ""} ${favorite ? "is-favorite" : ""} ${droppable.isOver ? "is-drop-before" : ""} ${draggable.isDragging ? "is-dragging" : ""}`}
       style={{ transform: CSS.Translate.toString(draggable.transform) }}
       role="option"
       aria-selected={selected}
       tabIndex={0}
-      onContextMenu={(event) => {
-        if (editing && (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))
-          return;
-        event.preventDefault();
-        onMoveRequest(tag, { x: event.clientX, y: event.clientY });
+      onPointerDownCapture={(event) => {
+        if (event.button === 2) requestMoveMenu(event);
       }}
+      onContextMenuCapture={requestMoveMenu}
       onClick={(event) => {
         if (editing) return;
         onSelect(
@@ -262,6 +293,7 @@ function TagRow({
               beginEditing();
             }}
           >
+            {favorite && <Star className="favorite-star" aria-label="お気に入り" fill="currentColor" />}
             {tag.prompt}
           </span>
           <span
@@ -314,6 +346,8 @@ interface LaneProps {
   query: string;
   showDuplicatesOnly: boolean;
   showSelectedOnly: boolean;
+  showFavoritesOnly: boolean;
+  favoriteTagKeys: Set<string>;
   focused: boolean;
   deemphasized: boolean;
   dragActive: boolean;
@@ -352,6 +386,7 @@ export function KanbanLane(props: LaneProps) {
           (!props.showDuplicatesOnly ||
             (props.duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0) > 1) &&
           (!props.showSelectedOnly || props.selectedIds.has(tag.uid))
+          && (!props.showFavoritesOnly || props.favoriteTagKeys.has(favoriteTagKey(tag.prompt)))
         );
       }),
     [props],
@@ -472,6 +507,7 @@ export function KanbanLane(props: LaneProps) {
               duplicateCount={props.duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0}
               changeLabel={props.changeLabels.get(tag.uid)}
               recentlyMoved={props.recentlyMovedIds.has(tag.uid)}
+              favorite={props.favoriteTagKeys.has(favoriteTagKey(tag.prompt))}
               visibleIds={visibleIds}
               onSelect={props.onSelect}
               onEdit={props.onEdit}
@@ -500,6 +536,7 @@ export function KanbanLane(props: LaneProps) {
                     duplicateCount={props.duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0}
                     changeLabel={props.changeLabels.get(tag.uid)}
                     recentlyMoved={props.recentlyMovedIds.has(tag.uid)}
+                    favorite={props.favoriteTagKeys.has(favoriteTagKey(tag.prompt))}
                     visibleIds={visibleIds}
                     onSelect={props.onSelect}
                     onEdit={props.onEdit}

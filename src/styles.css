@@ -341,6 +341,7 @@ button:disabled {
 .global-search-row:hover,
 .global-search-row:focus-visible { background: var(--surface-1); }
 .global-search-row.is-selected { background: color-mix(in oklch, var(--accent) 14%, var(--surface-1)); }
+.global-search-row.is-favorite { box-shadow: inset 2px 0 var(--amber); }
 .global-result-prompt { color: var(--tag-prompt-ink); font: 700 11px/1.4 "Cascadia Mono", "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
 .global-result-translation { color: var(--tag-translation-ink); overflow-wrap: anywhere; }
 .global-result-path { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
@@ -367,6 +368,15 @@ button:disabled {
 .tag-move-menu > header small { color: var(--muted); }
 .tag-move-menu > header button { width: 28px; min-height: 28px; padding: 0; border: 0; background: transparent; }
 .tag-move-search { margin: 8px; }
+.favorite-menu-action {
+  justify-content: flex-start;
+  margin: 0 8px 8px;
+  color: var(--amber);
+  border-color: color-mix(in oklch, var(--amber) 48%, var(--line));
+  background: color-mix(in oklch, var(--amber) 9%, var(--surface-1));
+  font-size: 12px;
+}
+.favorite-menu-action svg { width: 15px; }
 .tag-move-destinations { min-height: 0; overflow-y: auto; border-block: 1px solid var(--line-soft); }
 .tag-move-destinations button { width: 100%; min-height: 36px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }
 .tag-move-destinations button:hover,
@@ -952,6 +962,10 @@ button:disabled {
   background: color-mix(in oklch, var(--accent) 9%, var(--surface-1));
   box-shadow: inset 2px 0 color-mix(in oklch, var(--accent) 78%, var(--surface-1));
 }
+.tag-row.is-favorite:not(.is-selected) {
+  background: color-mix(in oklch, var(--amber) 8%, var(--surface-1));
+  box-shadow: inset 2px 0 var(--amber);
+}
 .tag-row > .tag-check {
   grid-column: 1;
 }
@@ -1210,6 +1224,15 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.005em;
   cursor: text;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.favorite-star {
+  width: 13px;
+  height: 13px;
+  color: var(--amber);
+  flex: 0 0 auto;
 }
 .tag-translation {
   color: var(--tag-translation-ink);

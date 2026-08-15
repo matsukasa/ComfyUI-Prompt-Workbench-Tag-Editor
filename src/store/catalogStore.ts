@@ -28,6 +28,7 @@ interface StoreState {
   categoryQuery: string;
   showDuplicatesOnly: boolean;
   showSelectedOnly: boolean;
+  showFavoritesOnly: boolean;
   error: string | null;
   load: (document: CatalogDocument) => void;
   markSaved: (fileName: string, filePath?: string) => void;
@@ -39,6 +40,7 @@ interface StoreState {
   setCategoryQuery: (query: string) => void;
   setDuplicateFilter: (value: boolean) => void;
   setSelectedFilter: (value: boolean) => void;
+  setFavoriteFilter: (value: boolean) => void;
   selectTag: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   selectMany: (uids: string[]) => void;
   clearSelection: () => void;
@@ -96,6 +98,7 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
   categoryQuery: "",
   showDuplicatesOnly: false,
   showSelectedOnly: false,
+  showFavoritesOnly: false,
   error: null,
   load: (document) =>
     set({
@@ -148,6 +151,7 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
   setCategoryQuery: (categoryQuery) => set({ categoryQuery }),
   setDuplicateFilter: (showDuplicatesOnly) => set({ showDuplicatesOnly }),
   setSelectedFilter: (showSelectedOnly) => set({ showSelectedOnly }),
+  setFavoriteFilter: (showFavoritesOnly) => set({ showFavoritesOnly }),
   selectTag: (uid, mode, visibleIds) =>
     set((state) => {
       if (mode === "range" && state.anchorTagId) {

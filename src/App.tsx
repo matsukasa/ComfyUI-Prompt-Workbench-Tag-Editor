@@ -30,6 +30,7 @@ import {
   Save,
   Search,
   Settings,
+  Star,
   Sun,
   Trash2,
   Undo2,
@@ -58,6 +59,12 @@ import {
   validateCatalog,
 } from "./domain/catalog";
 import { categoryPath, sortedChildren } from "./domain/operations";
+import {
+  favoriteTagKey,
+  readFavoriteSettings,
+  toggleFavorite,
+  writeFavoriteSettings,
+} from "./domain/favorites";
 import type { CategoryNode, TagOccurrence } from "./domain/types";
 import { demoDocument } from "./demoCatalog";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
@@ -87,6 +94,7 @@ interface TrailVector {
 
 interface MoveMenuState {
   tagIds: string[];
+  anchorTagId: string;
   x: number;
   y: number;
 }
@@ -205,6 +213,7 @@ export function App() {
   const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [soundEnabled, setSoundEnabled] = useState(readDragSoundPreference);
+  const [favoriteTags, setFavoriteTags] = useState(() => readFavoriteSettings().favorites);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
@@ -337,6 +346,7 @@ export function App() {
     return tagId ? (document?.tags.find((tag) => tag.uid === tagId)?.categoryId ?? null) : null;
   }, [activeDrag, document, store.anchorTagId]);
   const recentlyMoved = useMemo(() => new Set(recentlyMovedTagIds), [recentlyMovedTagIds]);
+  const favoriteTagKeys = useMemo(() => new Set(favoriteTags), [favoriteTags]);
   const validTagTarget = useMemo(() => {
     if (activeDrag?.type !== "tag" || !overCategoryId || !document) return false;
     return document.categories.some(
@@ -355,9 +365,19 @@ export function App() {
         (!store.showDuplicatesOnly ||
           (duplicateCounts.get(tag.prompt.toLocaleLowerCase()) ?? 0) > 1) &&
         (!store.showSelectedOnly || selected.has(tag.uid))
+        && (!store.showFavoritesOnly || favoriteTagKeys.has(favoriteTagKey(tag.prompt)))
       );
     });
-  }, [document, duplicateCounts, normalizedGlobalQuery, selected, store.showDuplicatesOnly, store.showSelectedOnly]);
+  }, [
+    document,
+    duplicateCounts,
+    favoriteTagKeys,
+    normalizedGlobalQuery,
+    selected,
+    store.showDuplicatesOnly,
+    store.showFavoritesOnly,
+    store.showSelectedOnly,
+  ]);
   const smallCategoryDestinations = useMemo(() => {
     if (!document) return [];
     const query = moveDestinationQuery.trim().toLocaleLowerCase();
@@ -420,6 +440,12 @@ export function App() {
     !window.isSecureContext &&
     window.location.hostname !== "localhost";
   const localhostUrl = `${window.location.protocol}//localhost${window.location.port ? `:${window.location.port}` : ""}${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const moveMenuAnchorTag = moveMenu
+    ? document.tags.find((tag) => tag.uid === moveMenu.anchorTagId) ?? null
+    : null;
+  const moveMenuAnchorFavorite = moveMenuAnchorTag
+    ? favoriteTagKeys.has(favoriteTagKey(moveMenuAnchorTag.prompt))
+    : false;
 
   const confirmDiscard = () =>
     !dirty || window.confirm("未保存の変更があります。破棄して別ファイルを読み込みますか？");
@@ -521,6 +547,7 @@ export function App() {
       await writeCatalogFile(overwriteHandle, document);
       setCurrentCatalogFileHandle(overwriteHandle);
       store.markSaved(overwriteHandle.name, catalogHandlePath(overwriteHandle) ?? document.filePath);
+      store.clearSelection();
       setSaveMode(null);
       setToast({ message: `${overwriteHandle.name} を上書き保存しました` });
     } catch (error) {
@@ -545,6 +572,7 @@ export function App() {
     setMoveDestinationQuery("");
     setMoveMenu({
       tagIds,
+      anchorTagId: tag.uid,
       x: Math.max(8, Math.min(point.x, window.innerWidth - 376)),
       y: Math.max(8, Math.min(point.y, window.innerHeight - 436)),
     });
@@ -554,6 +582,7 @@ export function App() {
     store.selectMany(moveMenu.tagIds);
     store.applyTagMove(target.id);
     setRecentlyMovedTagIds(moveMenu.tagIds);
+    store.clearSelection();
     if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
     recentMoveTimer.current = window.setTimeout(() => setRecentlyMovedTagIds([]), 600);
     setToast({
@@ -726,7 +755,26 @@ export function App() {
     setTrailVector((current) => ({ ...current, visible: false }));
     dragSounds.current.cancel();
   };
+  const updateFavorites = (nextFavorites: string[]) => {
+    setFavoriteTags(nextFavorites);
+    writeFavoriteSettings({ favorites: nextFavorites });
+  };
+  const toggleTagFavorite = (tag: TagOccurrence) => {
+    const next = toggleFavorite(favoriteTags, tag.prompt);
+    updateFavorites(next);
+    store.clearSelection();
+    setToast({
+      message: next.includes(favoriteTagKey(tag.prompt))
+        ? "お気に入りに追加しました"
+        : "お気に入りから削除しました",
+    });
+  };
   const editTag = (tag: TagOccurrence, prompt: string, translationJa: string) => {
+    const oldKey = favoriteTagKey(tag.prompt);
+    const newKey = favoriteTagKey(prompt);
+    if (oldKey && newKey && oldKey !== newKey && favoriteTagKeys.has(oldKey)) {
+      updateFavorites([...favoriteTags.filter((key) => key !== oldKey), newKey]);
+    }
     store.editTag(tag.uid, prompt, translationJa);
   };
   const editCategory = (category: CategoryNode, labelJa: string, labelEn: string) => {
@@ -942,6 +990,15 @@ export function App() {
                 重複タグのみ
               </button>
               <button
+                className={store.showFavoritesOnly ? "is-active" : ""}
+                type="button"
+                onClick={() => store.setFavoriteFilter(!store.showFavoritesOnly)}
+                aria-pressed={store.showFavoritesOnly}
+              >
+                <Star fill={store.showFavoritesOnly ? "currentColor" : "none"} />
+                お気に入りのみ表示
+              </button>
+              <button
                 type="button"
                 disabled={store.selectedTagIds.length === 0}
                 onClick={store.clearSelection}
@@ -1007,10 +1064,11 @@ export function App() {
                   <div className="global-search-list" aria-label="一致したタグ">
                     {globalSearchResults.map((tag) => {
                       const path = categoryPath(document.categories, tag.categoryId);
+                      const favorite = favoriteTagKeys.has(favoriteTagKey(tag.prompt));
                       return (
                         <button
                           key={tag.uid}
-                          className={`global-search-row ${selected.has(tag.uid) ? "is-selected" : ""}`}
+                          className={`global-search-row ${selected.has(tag.uid) ? "is-selected" : ""} ${favorite ? "is-favorite" : ""}`}
                           type="button"
                           data-tag-id={tag.uid}
                           onClick={() => revealSearchResult(tag)}
@@ -1026,7 +1084,10 @@ export function App() {
                             }
                           }}
                         >
-                          <span className="global-result-prompt">{tag.prompt}</span>
+                          <span className="global-result-prompt">
+                            {favorite && <Star className="favorite-star" aria-label="お気に入り" fill="currentColor" />}
+                            {tag.prompt}
+                          </span>
                           <span className="global-result-translation">{tag.translationJa || "—"}</span>
                           <span className="global-result-path">{path.map((category) => category.labelJa).join(" > ")}</span>
                           <ChevronRight aria-hidden="true" />
@@ -1060,6 +1121,8 @@ export function App() {
                     query={store.globalQuery}
                     showDuplicatesOnly={store.showDuplicatesOnly}
                     showSelectedOnly={store.showSelectedOnly}
+                    showFavoritesOnly={store.showFavoritesOnly}
+                    favoriteTagKeys={favoriteTagKeys}
                     focused={category.id === focusedCategoryId}
                     deemphasized={Boolean(focusedCategoryId && category.id !== focusedCategoryId)}
                     dragActive={activeDrag?.type === "tag"}
@@ -1132,6 +1195,20 @@ export function App() {
               aria-label="移動先の分類を検索"
             />
           </label>
+          {moveMenuAnchorTag && (
+            <button
+              className="favorite-menu-action"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                toggleTagFavorite(moveMenuAnchorTag);
+                setMoveMenu(null);
+              }}
+            >
+              <Star fill={moveMenuAnchorFavorite ? "currentColor" : "none"} />
+              {moveMenuAnchorFavorite ? "お気に入りから削除" : "お気に入りに追加"}
+            </button>
+          )}
           <div className="tag-move-destinations" role="listbox" aria-label="移動先の小分類">
             {smallCategoryDestinations.length ? smallCategoryDestinations.map(({ category, path }) => (
               <button
