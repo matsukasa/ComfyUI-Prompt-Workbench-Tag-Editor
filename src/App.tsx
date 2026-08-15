@@ -805,7 +805,13 @@ export function App() {
 
   const selectedTags = document.tags.filter((tag) => selected.has(tag.uid));
   return (
-    <div ref={appShellRef} className={`app-shell theme-${theme}`}>
+    <div
+      ref={appShellRef}
+      className={`app-shell theme-${theme}`}
+      onContextMenuCapture={(event) => {
+        event.preventDefault();
+      }}
+    >
       <header className="app-toolbar">
         <div className="app-title">
           <FileJson />
