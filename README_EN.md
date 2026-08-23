@@ -6,7 +6,7 @@ A local browser app for organising the tag catalogue and tag sets used by `Comfy
 
 It works without starting ComfyUI. You can maintain category structures, move tags, rename tags, edit tag sets, manage image metadata, and exchange changes through differential ZIP Import / Export.
 
-Some tag sets bundled with Prompt Workbench include prompts created by [Alice Youfukuten (@AliceLavli)](https://x.com/AliceLavli), kindly shared with permission. Thank you very much for providing such lovely prompt sets.
+Some tag sets bundled with Prompt Workbench include a selection of publicly posted prompts created by [Alice Youfukuten (@AliceLavli)](https://x.com/AliceLavli), included with kind permission. Thank you very much for allowing Prompt Workbench to include them. They are wonderfully expressive and practical references for outfits, mood, and prompt composition, and I am very happy to introduce them as tag sets here.
 
 ## Main Features
 
