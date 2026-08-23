@@ -39,6 +39,7 @@ const sourceImageRoute = `${localDataRoute}source-image`;
 const imageDirectory = path.join(promptWorkbenchData, "tag-set-images");
 const distImageDirectory = path.join(root, "dist", "client", "prompt-workbench-data", "tag-set-images");
 const defaultDataFiles = ["tag_catalog.json", "tag_sets.json"];
+const allowedDataDirectories = new Set([path.resolve(promptWorkbenchData)]);
 
 function safeImageFileName(value) {
   let input = String(value || "");
@@ -56,8 +57,12 @@ function dataDirectoryFromRequest(request) {
   const rawDirectory =
     parsedUrl.searchParams.get("dataDir") ||
     String(request.headers["x-prompt-workbench-data-dir"] ?? "");
-  if (!rawDirectory) return promptWorkbenchData;
-  return path.resolve(rawDirectory);
+  if (!rawDirectory) return path.resolve(promptWorkbenchData);
+  const resolved = path.resolve(rawDirectory);
+  if (!allowedDataDirectories.has(resolved)) {
+    throw new Error("Requested Prompt Workbench data directory is not allowed for this server. Restart with PROMPT_WORKBENCH_DATA_DIR set to that data folder.");
+  }
+  return resolved;
 }
 
 function imageDirectoryFromRequest(request) {
@@ -172,7 +177,14 @@ function promptWorkbenchDataPlugin() {
         response.end("Image is too large");
         return;
       }
-      const targetImageDirectory = imageDirectoryFromRequest(request);
+      let targetImageDirectory;
+      try {
+        targetImageDirectory = imageDirectoryFromRequest(request);
+      } catch (error) {
+        response.statusCode = 400;
+        response.end(error instanceof Error ? error.message : "Invalid data directory");
+        return;
+      }
       mkdirSync(targetImageDirectory, { recursive: true });
       const outputPath = path.join(targetImageDirectory, fileName);
       const buffer = Buffer.concat(chunks);
@@ -203,7 +215,15 @@ function promptWorkbenchDataPlugin() {
       response.end("Invalid file name");
       return;
     }
-    for (const directory of [imageDirectoryFromRequest(request), distImageDirectory]) {
+    let targetImageDirectory;
+    try {
+      targetImageDirectory = imageDirectoryFromRequest(request);
+    } catch (error) {
+      response.statusCode = 400;
+      response.end(error instanceof Error ? error.message : "Invalid data directory");
+      return;
+    }
+    for (const directory of [targetImageDirectory, distImageDirectory]) {
       const filePath = path.join(directory, fileName);
       if (existsSync(filePath) && statSync(filePath).isFile()) unlinkSync(filePath);
     }
@@ -224,7 +244,15 @@ function promptWorkbenchDataPlugin() {
       response.end("Invalid file name");
       return;
     }
-    const filePath = path.join(imageDirectoryFromRequest(request), fileName);
+    let targetImageDirectory;
+    try {
+      targetImageDirectory = imageDirectoryFromRequest(request);
+    } catch (error) {
+      response.statusCode = 400;
+      response.end(error instanceof Error ? error.message : "Invalid data directory");
+      return;
+    }
+    const filePath = path.join(targetImageDirectory, fileName);
     if (!existsSync(filePath) || !statSync(filePath).isFile()) {
       response.statusCode = 404;
       response.end("Not found");

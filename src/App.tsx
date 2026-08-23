@@ -751,8 +751,9 @@ export function App() {
         replaceTagSetDocument(parsed);
         setTagSetBaseline(comparableTagSetDocument(parsed));
         setTagSetBaselineDocument(structuredClone(parsed));
-      } catch {
-        setToast({ message: "タグカタログを読み込みました", detail: "タグセット設定は手動で開いてください" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setToast({ message: "タグセットを読み込めませんでした", detail: `タグカタログのみ読み込みました: ${detail}` });
       }
     };
     void loadDefaultFiles();
@@ -1343,11 +1344,6 @@ export function App() {
       await waitForPaint();
       rememberImportedPackage(packagePreview.pkg);
       setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
-      setToast({
-        message: "Importを適用しました",
-        detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${packagePreview.summary.movedTags + packagePreview.summary.renamedTags + packagePreview.summary.changedCategories}件`,
-        undoable: true,
-      });
       setToast({
         message: "Importを適用しました",
         detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${

@@ -942,39 +942,6 @@ export function applyCatalogPatch(
 
 export function applyTagSetPatch(document: TagSetDocument, patch: SharePatch): TagSetDocument {
   return applyTagSetPatchWithCategories(document, patch);
-  const next = clone(document);
-  const smalls = new Map<string, { sets: TagSetItem[] }>();
-  for (const major of next.majorCategories) {
-    for (const medium of major.mediumCategories) {
-      for (const small of medium.smallCategories) smalls.set(small.id, small);
-    }
-  }
-  for (const operation of patch.operations) {
-    if (operation.type === "add_tagset" || operation.type === "update_tagset") {
-      const set = payloadObject(operation, "tagset");
-      const smallId = payloadString(set.smallId);
-      const target = smalls.get(smallId);
-      if (!target) throw new Error(`${payloadString(set.name) || operation.target_id} の移動先タグセットカテゴリがありません。`);
-      const item: TagSetItem = {
-        id: payloadString(set.id),
-        name: payloadString(set.name),
-        nameJa: payloadString(set.nameJa),
-        nameEn: payloadString(set.nameEn),
-        creator: payloadString(set.creator),
-        sourceUrl: payloadString(set.sourceUrl),
-        imageUrl: payloadString(set.imageUrl),
-        imagePath: payloadString(set.imagePath),
-        tags: Array.isArray(set.tags) ? set.tags.filter((value): value is string => typeof value === "string") : [],
-        raw: (asObject(set.raw) ?? {}) as JsonObject,
-      };
-      if (!item.id) throw new Error(`${operation.type} のタグセットIDが空です。`);
-      for (const small of smalls.values()) small.sets = small.sets.filter((existing) => existing.id !== item.id);
-      target.sets.splice(Math.max(0, Math.min(typeof set.order === "number" ? set.order : target.sets.length, target.sets.length)), 0, item);
-    } else if (operation.type === "delete_tagset") {
-      for (const small of smalls.values()) small.sets = small.sets.filter((existing) => existing.id !== operation.target_id);
-    }
-  }
-  return next;
 }
 
 function applyTagSetPatchWithCategories(
