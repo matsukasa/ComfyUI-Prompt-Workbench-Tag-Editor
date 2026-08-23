@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseCatalogText } from "../src/domain/catalog.ts";
 import { deleteTags } from "../src/domain/operations.ts";
-import { createSharePackage, parsePackageZip, packageToZip, previewImport } from "../src/domain/packages.ts";
+import { createSharePackage, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
 import { parseTagSetText } from "../src/domain/tagSets.ts";
 
 const catalogSource = JSON.stringify(
@@ -153,6 +153,68 @@ test("share packages allow importing only one included data type from a full pac
     "set-a",
     "set-b",
   ]);
+});
+
+test("share package zip includes tag set image assets", () => {
+  const tagSets = parseTagSetText(tagSetSource, "tag_sets.json");
+  const nextTagSets = structuredClone(tagSets);
+  nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].imagePath =
+    "/prompt-workbench-data/tag-set-images/set-a.webp";
+  nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].imageUrl =
+    "/prompt-workbench-data/tag-set-images/set-a.webp";
+  const pkg = createSharePackage({
+    packageName: "Images",
+    packageId: "pkg-images",
+    packageVersion: 1,
+    includeCatalog: false,
+    includeTagSets: true,
+    tagSetBaseline: tagSets,
+    tagSetDocument: nextTagSets,
+  });
+  pkg.imageAssets = [
+    {
+      tagSetId: "set-a",
+      fileName: "set-a.webp",
+      path: "/prompt-workbench-data/tag-set-images/set-a.webp",
+      zipPath: "assets/tag-set-images/set-a.webp",
+      contentType: "image/webp",
+      bytes: new Uint8Array([1, 2, 3]),
+    },
+  ];
+
+  const files = readZip(packageToZip(pkg));
+  const parsed = parsePackageZip(packageToZip(pkg));
+
+  assert.deepEqual([...files["assets/tag-set-images/set-a.webp"]], [1, 2, 3]);
+  assert.equal(parsed.manifest.assets?.tagset_images?.[0].tagset_id, "set-a");
+  assert.equal(parsed.imageAssets?.[0].zipPath, "assets/tag-set-images/set-a.webp");
+});
+
+test("share package import rejects unsafe image asset paths", () => {
+  const tagSets = parseTagSetText(tagSetSource, "tag_sets.json");
+  const pkg = createSharePackage({
+    packageName: "BadImages",
+    packageId: "pkg-bad-images",
+    packageVersion: 1,
+    includeCatalog: false,
+    includeTagSets: true,
+    tagSetBaseline: tagSets,
+    tagSetDocument: structuredClone(tagSets),
+  });
+  pkg.manifest.assets = {
+    tagset_images: [
+      {
+        tagset_id: "set-a",
+        file_name: "set-a.webp",
+        path: "/prompt-workbench-data/tag-set-images/set-a.webp",
+        zip_path: "assets/../set-a.webp",
+        content_type: "image/webp",
+        size: 3,
+      },
+    ],
+  };
+
+  assert.throws(() => parsePackageZip(packageToZip(pkg)));
 });
 
 test("share package export excludes delete operations", () => {

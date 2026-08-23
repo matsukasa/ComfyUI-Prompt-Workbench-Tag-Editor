@@ -30,6 +30,9 @@ export interface SharePackageManifest {
   base_tagset_version?: string;
   app_version?: string;
   created_at: string;
+  assets?: {
+    tagset_images?: SharePackageImageManifestEntry[];
+  };
 }
 
 type PatchOperation = JsonObject & {
@@ -42,10 +45,29 @@ export interface SharePatch {
   operations: PatchOperation[];
 }
 
+export interface SharePackageImageManifestEntry {
+  tagset_id: string;
+  file_name: string;
+  path: string;
+  zip_path: string;
+  content_type: string;
+  size: number;
+}
+
+export interface SharePackageImageAsset {
+  tagSetId: string;
+  fileName: string;
+  path: string;
+  zipPath: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
 export interface SharePackage {
   manifest: SharePackageManifest;
   catalogPatch?: SharePatch;
   tagsetPatch?: SharePatch;
+  imageAssets?: SharePackageImageAsset[];
   changesCsv: string;
 }
 
@@ -604,12 +626,29 @@ export function readZip(bytes: Uint8Array): Record<string, Uint8Array> {
 }
 
 export function packageToZip(pkg: SharePackage): Uint8Array {
+  const manifest: SharePackageManifest = pkg.imageAssets?.length
+    ? {
+        ...pkg.manifest,
+        assets: {
+          ...pkg.manifest.assets,
+          tagset_images: pkg.imageAssets.map((asset) => ({
+            tagset_id: asset.tagSetId,
+            file_name: asset.fileName,
+            path: asset.path,
+            zip_path: asset.zipPath,
+            content_type: asset.contentType,
+            size: asset.bytes.byteLength,
+          })),
+        },
+      }
+    : pkg.manifest;
   const files: Record<string, string | Uint8Array> = {
-    "manifest.json": `${JSON.stringify(pkg.manifest, null, 2)}\n`,
+    "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     "changes.csv": encoder.encode(pkg.changesCsv),
   };
   if (pkg.catalogPatch) files["catalog_patch.json"] = `${JSON.stringify(pkg.catalogPatch, null, 2)}\n`;
   if (pkg.tagsetPatch) files["tagset_patch.json"] = `${JSON.stringify(pkg.tagsetPatch, null, 2)}\n`;
+  for (const asset of pkg.imageAssets ?? []) files[asset.zipPath] = asset.bytes;
   return createZip(files);
 }
 
@@ -655,6 +694,26 @@ export function parsePackageZip(bytes: Uint8Array): SharePackage {
   if (manifest.contains.tagsets) pkg.tagsetPatch = validatePatch("tagset_patch.json", JSON.parse(textFile("tagset_patch.json") ?? "null") as SharePatch, TAGSET_OPERATION_TYPES);
   if (manifest.contains.catalog && !pkg.catalogPatch) throw new Error("catalog_patch.json が見つかりません。");
   if (manifest.contains.tagsets && !pkg.tagsetPatch) throw new Error("tagset_patch.json が見つかりません。");
+  const imageEntries = Array.isArray(manifest.assets?.tagset_images) ? manifest.assets.tagset_images : [];
+  pkg.imageAssets = imageEntries.map((entry, index) => {
+    const zipPath = String(entry.zip_path ?? "");
+    if (!zipPath.startsWith("assets/tag-set-images/") || zipPath.includes(".."))
+      throw new Error(`画像アセット ${index + 1} のパスが不正です。`);
+    const bytes = files[zipPath];
+    if (!bytes) throw new Error(`画像アセットが見つかりません: ${zipPath}`);
+    if (bytes.byteLength > 8 * 1024 * 1024) throw new Error(`画像アセットが大きすぎます: ${zipPath}`);
+    const fileName = String(entry.file_name ?? zipPath.split("/").pop() ?? "");
+    if (!fileName || fileName.includes("/") || fileName.includes("\\") || !fileName.toLowerCase().endsWith(".webp"))
+      throw new Error(`画像アセット ${index + 1} のファイル名が不正です。`);
+    return {
+      tagSetId: String(entry.tagset_id ?? ""),
+      fileName,
+      path: String(entry.path ?? ""),
+      zipPath,
+      contentType: String(entry.content_type ?? "image/webp"),
+      bytes,
+    };
+  });
   return pkg;
 }
 

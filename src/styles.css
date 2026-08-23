@@ -122,10 +122,35 @@ svg {
   border-left: 1px solid var(--line);
 }
 .current-file-path {
+  position: relative;
   direction: ltr;
   max-width: min(50vw, 720px);
+}
+
+.current-file-path-text {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.current-file-path:hover::after,
+.current-file-path:focus-visible::after {
+  content: attr(data-full-path);
+  position: absolute;
+  z-index: var(--z-popover);
+  left: 0;
+  top: calc(100% + 8px);
+  width: max-content;
+  max-width: min(82vw, 920px);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--ink);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 0.35);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 .unsaved {
   display: inline-flex;
@@ -2229,6 +2254,19 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-0);
+}
+
+.tag-set-image-drop-zone {
+  display: grid;
+  gap: 10px;
+  padding: 6px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+}
+
+.tag-set-image-drop-zone.is-image-drag-over {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
 }
 
 .tag-set-image-head {

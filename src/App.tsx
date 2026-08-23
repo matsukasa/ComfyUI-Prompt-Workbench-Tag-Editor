@@ -91,8 +91,9 @@ import {
   type ImportSelection,
   type ImportPreview,
   type PackageContentType,
+  type SharePackageImageAsset,
 } from "./domain/packages";
-import type { CatalogDocument, CategoryNode, TagOccurrence, TagSetDocument } from "./domain/types";
+import type { CatalogDocument, CategoryNode, TagOccurrence, TagSetDocument, TagSetItem } from "./domain/types";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
 
 const snapOverlayCenterToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
@@ -352,6 +353,137 @@ function downloadBytesFile(name: string, bytes: Uint8Array, type: string): void 
 function importBackupFileName(now = new Date()): string {
   const part = (value: number) => String(value).padStart(2, "0");
   return `PromptWorkbench_ImportBackup_${now.getFullYear()}${part(now.getMonth() + 1)}${part(now.getDate())}_${part(now.getHours())}${part(now.getMinutes())}${part(now.getSeconds())}.zip`;
+}
+
+const TAG_SET_IMAGE_ROUTE = "/prompt-workbench-data/tag-set-images";
+
+function tagSetImageFileName(imagePath: string): string {
+  const rawName = imagePath.split("?")[0].split(/[\\/]/u).pop() ?? "";
+  try {
+    return decodeURIComponent(rawName);
+  } catch {
+    return rawName;
+  }
+}
+
+function safeZipImageFileName(value: string, fallback: string): string {
+  const safe = (value || fallback)
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/gu, "-")
+    .replace(/\s+/gu, "-")
+    .replace(/[. ]+$/gu, "")
+    .slice(0, 96);
+  const base = safe.replace(/\.[^.]+$/u, "") || fallback;
+  return `${base}.webp`;
+}
+
+function tagSetImageSourceUrl(imagePath: string, dataDirectory: string): string {
+  const query = new URLSearchParams();
+  if (dataDirectory.trim()) query.set("dataDir", dataDirectory.trim());
+  return query.size ? `${imagePath}?${query.toString()}` : imagePath;
+}
+
+function packageImageCandidates(pkg: ImportPreview["pkg"]): { tagSetId: string; path: string }[] {
+  const candidates = new Map<string, { tagSetId: string; path: string }>();
+  for (const operation of pkg.tagsetPatch?.operations ?? []) {
+    if (operation.type !== "add_tagset" && operation.type !== "update_tagset") continue;
+    const tagset = operation.tagset;
+    if (!tagset || typeof tagset !== "object" || Array.isArray(tagset)) continue;
+    const tagSetId = typeof operation.target_id === "string" ? operation.target_id : "";
+    const imagePath = typeof tagset.imagePath === "string" ? tagset.imagePath : "";
+    if (!tagSetId || !imagePath.startsWith(`${TAG_SET_IMAGE_ROUTE}/`)) continue;
+    candidates.set(tagSetId, { tagSetId, path: imagePath });
+  }
+  return [...candidates.values()];
+}
+
+async function collectPackageImageAssets(
+  pkg: ImportPreview["pkg"],
+  dataDirectory: string,
+): Promise<{ assets: SharePackageImageAsset[]; warnings: string[] }> {
+  const assets: SharePackageImageAsset[] = [];
+  const warnings: string[] = [];
+  const usedNames = new Set<string>();
+  for (const candidate of packageImageCandidates(pkg)) {
+    const fileName = safeZipImageFileName(tagSetImageFileName(candidate.path), `${candidate.tagSetId}.webp`);
+    const zipFileName = usedNames.has(fileName) ? safeZipImageFileName(`${candidate.tagSetId}-${fileName}`, fileName) : fileName;
+    usedNames.add(zipFileName);
+    try {
+      const response = await fetch(tagSetImageSourceUrl(candidate.path, dataDirectory));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!bytes.byteLength) throw new Error("empty image");
+      assets.push({
+        tagSetId: candidate.tagSetId,
+        fileName: zipFileName,
+        path: candidate.path,
+        zipPath: `assets/tag-set-images/${zipFileName}`,
+        contentType: response.headers.get("Content-Type") || "image/webp",
+        bytes,
+      });
+    } catch (error) {
+      warnings.push(`${candidate.tagSetId}: ${error instanceof Error ? error.message : "画像を取得できませんでした"}`);
+    }
+  }
+  return { assets, warnings };
+}
+
+async function saveImportedImageAsset(
+  asset: SharePackageImageAsset,
+  dataDirectory: string,
+): Promise<{ tagSetId: string; path: string }> {
+  const response = await fetch(TAG_SET_IMAGE_ROUTE, {
+    method: "POST",
+    headers: {
+      "Content-Type": asset.contentType || "image/webp",
+      "X-File-Name": encodeURIComponent(asset.fileName),
+      ...(dataDirectory.trim() ? { "X-Prompt-Workbench-Data-Dir": dataDirectory.trim() } : {}),
+    },
+    body: asset.bytes,
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const saved = (await response.json()) as { path?: string };
+  return { tagSetId: asset.tagSetId, path: saved.path || `${TAG_SET_IMAGE_ROUTE}/${asset.fileName}` };
+}
+
+function tagSetImageSnapshot(document?: TagSetDocument | null): Map<string, Pick<TagSetItem, "imageUrl" | "imagePath">> {
+  const result = new Map<string, Pick<TagSetItem, "imageUrl" | "imagePath">>();
+  if (!document) return result;
+  for (const major of document.majorCategories) {
+    for (const medium of major.mediumCategories) {
+      for (const small of medium.smallCategories) {
+        for (const set of small.sets) result.set(set.id, { imageUrl: set.imageUrl, imagePath: set.imagePath });
+      }
+    }
+  }
+  return result;
+}
+
+function applyImportedImageResults(
+  document: TagSetDocument,
+  restoredPaths: Map<string, string>,
+  failedIds: Set<string>,
+  previousImages: Map<string, Pick<TagSetItem, "imageUrl" | "imagePath">>,
+): TagSetDocument {
+  const next = structuredClone(document);
+  for (const major of next.majorCategories) {
+    for (const medium of major.mediumCategories) {
+      for (const small of medium.smallCategories) {
+        for (const set of small.sets) {
+          const restoredPath = restoredPaths.get(set.id);
+          if (restoredPath) {
+            set.imageUrl = restoredPath;
+            set.imagePath = restoredPath;
+          } else if (failedIds.has(set.id)) {
+            const previous = previousImages.get(set.id);
+            set.imageUrl = previous?.imageUrl ?? "";
+            set.imagePath = previous?.imagePath ?? "";
+          }
+        }
+      }
+    }
+  }
+  return next;
 }
 
 function packageContentLabel(value: PackageContentType): string {
@@ -1039,13 +1171,13 @@ export function App() {
   const exportPackage = async () => {
     setPackageBusy(true);
     let phase = "差分を確認しています";
-    setPackageProgress({ phase, current: 1, total: 5 });
+    setPackageProgress({ phase, current: 1, total: 6 });
     try {
       await waitForPaint();
       const includeCatalog = packageContentType === "Catalog" || packageContentType === "Full";
       const includeTagSets = packageContentType === "TagSets" || packageContentType === "Full";
       phase = "patchを生成しています";
-      setPackageProgress({ phase, current: 2, total: 5 });
+      setPackageProgress({ phase, current: 2, total: 6 });
       await waitForPaint();
       const pkg = createSharePackage({
         packageName,
@@ -1062,19 +1194,26 @@ export function App() {
         store.setError("書き出せる差分がありません。タグカタログまたはタグセットを読み込んでください。");
         return;
       }
+      phase = "画像アセットを集めています";
+      setPackageProgress({ phase, current: 3, total: 6 });
+      await waitForPaint();
+      const imageResult = includeTagSets ? await collectPackageImageAssets(pkg, promptWorkbenchDataDir) : { assets: [], warnings: [] };
+      pkg.imageAssets = imageResult.assets;
       writePackageName(packageName);
       phase = "manifestとCSVを生成しています";
-      setPackageProgress({ phase, current: 3, total: 5 });
+      setPackageProgress({ phase, current: 4, total: 6 });
       await waitForPaint();
       const zipName = packageFileName(packageName, packageContentType, packageVersion);
       phase = "ZIPを作成しています";
-      setPackageProgress({ phase, current: 4, total: 5 });
+      setPackageProgress({ phase, current: 5, total: 6 });
       await waitForPaint();
       downloadBytesFile(zipName, packageToZip(pkg), "application/zip");
-      setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
+      setPackageProgress({ phase: "完了しました", current: 6, total: 6 });
       setToast({
         message: `${zipName} を書き出しました`,
-        detail: `Catalog ${pkg.catalogPatch?.operations.length ?? 0}件 / TagSets ${pkg.tagsetPatch?.operations.length ?? 0}件`,
+        detail: `Catalog ${pkg.catalogPatch?.operations.length ?? 0}件 / TagSets ${pkg.tagsetPatch?.operations.length ?? 0}件 / 画像 ${pkg.imageAssets.length}件${
+          imageResult.warnings.length ? ` / 画像スキップ ${imageResult.warnings.length}件` : ""
+        }`,
       });
       setPackageDialogMode(null);
     } catch (error) {
@@ -1122,17 +1261,17 @@ export function App() {
       await waitForPaint();
       const pkg = parsePackageZip(new Uint8Array(await file.arrayBuffer()));
       phase = "競合を確認しています";
-      setPackageProgress({ phase, current: 3, total: 5 });
+      setPackageProgress({ phase, current: 4, total: 6 });
       await waitForPaint();
       const selection = { catalog: pkg.manifest.contains.catalog, tagsets: pkg.manifest.contains.tagsets };
       setPackageImportSelection(selection);
       setPackageConflictResolution("stop");
       phase = "previewを作成しています";
-      setPackageProgress({ phase, current: 4, total: 5 });
+      setPackageProgress({ phase, current: 5, total: 6 });
       await waitForPaint();
       setPackagePreview(buildImportPreview(pkg, selection));
       setPackageDialogMode("import");
-      setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
+      setPackageProgress({ phase: "完了しました", current: 6, total: 6 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "差分ZIPを読み込めませんでした。";
       store.setError(`差分ZIPを読み込めませんでした。\n処理段階: ${phase}\n原因: ${message}`);
@@ -1165,10 +1304,29 @@ export function App() {
       setPackageProgress({ phase, current: 2, total: 5 });
       await waitForPaint();
       if (packagePreview.nextCatalog) store.replaceDocument(packagePreview.nextCatalog);
+      phase = "画像アセットを復元しています";
+      setPackageProgress({ phase, current: 3, total: 6 });
+      await waitForPaint();
+      const restoredImagePaths = new Map<string, string>();
+      const failedImageIds = new Set<string>();
+      if (packageImportSelection.tagsets) {
+        for (const asset of packagePreview.pkg.imageAssets ?? []) {
+          try {
+            const saved = await saveImportedImageAsset(asset, promptWorkbenchDataDir);
+            restoredImagePaths.set(saved.tagSetId, saved.path);
+          } catch {
+            failedImageIds.add(asset.tagSetId);
+          }
+        }
+      }
       phase = "タグセットを適用しています";
       setPackageProgress({ phase, current: 3, total: 5 });
       await waitForPaint();
-      if (packagePreview.nextTagSets) editTagSetDocument(packagePreview.nextTagSets);
+      if (packagePreview.nextTagSets) {
+        editTagSetDocument(
+          applyImportedImageResults(packagePreview.nextTagSets, restoredImagePaths, failedImageIds, tagSetImageSnapshot(previousTagSets)),
+        );
+      }
       phase = "Import履歴を記録しています";
       setPackageProgress({ phase, current: 4, total: 5 });
       await waitForPaint();
@@ -1177,6 +1335,13 @@ export function App() {
       setToast({
         message: "Importを適用しました",
         detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${packagePreview.summary.movedTags + packagePreview.summary.renamedTags + packagePreview.summary.changedCategories}件`,
+        undoable: true,
+      });
+      setToast({
+        message: "Importを適用しました",
+        detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${
+          packagePreview.summary.movedTags + packagePreview.summary.renamedTags + packagePreview.summary.changedCategories
+        }件 / 画像 ${restoredImagePaths.size}件 / 画像スキップ ${failedImageIds.size}件`,
         undoable: true,
       });
       setPackagePreview(null);
@@ -1306,6 +1471,7 @@ export function App() {
                   Catalog {packagePreview.pkg.catalogPatch?.operations.length ?? 0}件 / TagSets{" "}
                   {packagePreview.pkg.tagsetPatch?.operations.length ?? 0}件
                 </span>
+                <span>画像 {packagePreview.pkg.imageAssets?.length ?? 0}件</span>
                 {packagePreview.conflicts.length > 0 && (
                   <span>
                     競合 {packagePreview.conflicts.length}件
@@ -1711,8 +1877,12 @@ export function App() {
           <div className="app-title">
             <FileJson />
             <strong>ComfyUI Prompt Workbench Tag Editor</strong>
-            <span className="current-file-path" title={tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}>
-              {tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}
+            <span
+              className="current-file-path"
+              title={tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}
+              data-full-path={tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}
+            >
+              <span className="current-file-path-text">{tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}</span>
             </span>
             {dirty && (
               <span className="unsaved">
@@ -1917,8 +2087,8 @@ export function App() {
         <div className="app-title">
           <FileJson />
           <strong>ComfyUI Prompt Workbench Tag Editor</strong>
-          <span className="current-file-path" title={document.filePath ?? document.fileName}>
-            {document.filePath ?? document.fileName}
+          <span className="current-file-path" title={document.filePath ?? document.fileName} data-full-path={document.filePath ?? document.fileName}>
+            <span className="current-file-path-text">{document.filePath ?? document.fileName}</span>
           </span>
           {dirty && (
             <span className="unsaved">

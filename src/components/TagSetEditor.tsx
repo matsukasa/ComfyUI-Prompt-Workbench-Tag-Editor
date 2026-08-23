@@ -609,6 +609,7 @@ export function TagSetEditor({
   const imagePreviewUrlsRef = useRef<Record<string, string>>({});
   const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
   const [imageStatus, setImageStatus] = useState("");
+  const [imageDragActive, setImageDragActive] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const selectedSmall = resolveSmall(document, smallSelection) ?? resolveSmall(document, firstSmallSelection(document));
@@ -1140,14 +1141,33 @@ export function TagSetEditor({
     }
   };
 
-  const replaceImageWithLocalFile = (file?: File) => {
+  const saveLocalImageFile = async (file?: File) => {
     if (!selectedSet || !file) return;
-    setLocalImagePreview(selectedSet.id, file);
-    editSelectedSet((item) => {
-      item.imageUrl = "";
-      item.imagePath = file.name;
-    });
-    setImageStatus(`${file.name} に差し替えました。`);
+    if (!file.type.startsWith("image/")) {
+      setImageStatus("画像ファイルを選んでください。");
+      return;
+    }
+    const setId = selectedSet.id;
+    setLocalImagePreview(setId, file);
+    setImageStatus("画像を保存しています...");
+    try {
+      const suggestedName = imageFileNameFromDisplayName(selectedSet.name, selectedSet.nameJa || selectedSet.nameEn || selectedSet.id);
+      const savedImage = await saveImageBlob(file, suggestedName, promptWorkbenchDataDir);
+      editSelectedSet((item) => {
+        item.imageUrl = savedImage.path;
+        item.imagePath = savedImage.path;
+      });
+      setImagePreviewUrls((current) => {
+        if (current[setId]) URL.revokeObjectURL(current[setId]);
+        const next = { ...current };
+        delete next[setId];
+        imagePreviewUrlsRef.current = next;
+        return next;
+      });
+      setImageStatus(`${savedImage.fileName} を保存しました。`);
+    } catch (error) {
+      setImageStatus(error instanceof Error ? error.message : "画像を保存できませんでした。");
+    }
   };
 
   const clearSelectedSetImage = async () => {
@@ -1584,6 +1604,21 @@ export function TagSetEditor({
               />
             </label>
             <section className="tag-set-image-panel" aria-label="タグセット画像">
+              <div
+                className={`tag-set-image-drop-zone ${imageDragActive ? "is-image-drag-over" : ""}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setImageDragActive(true);
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setImageDragActive(false);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setImageDragActive(false);
+                  void saveLocalImageFile([...event.dataTransfer.files].find((file) => file.type.startsWith("image/")));
+                }}
+              >
               <div className="tag-set-image-head">
                 <span>
                   <Image />
@@ -1607,13 +1642,14 @@ export function TagSetEditor({
                   削除
                 </button>
               </div>
+              </div>
               <input
                 ref={imageFileInputRef}
                 type="file"
                 accept="image/*"
                 hidden
                 onChange={(event) => {
-                  replaceImageWithLocalFile(event.target.files?.[0]);
+                  void saveLocalImageFile(event.target.files?.[0]);
                   event.currentTarget.value = "";
                 }}
               />
