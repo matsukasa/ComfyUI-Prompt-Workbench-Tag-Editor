@@ -527,6 +527,14 @@ function rememberImportedPackage(pkg: ImportPreview["pkg"]): void {
   }
 }
 
+function importErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("format_version")) {
+    return "このZIPはImport用の差分ZIPとして読み込めません。Import時に作成されたバックアップZIPを選んでいる場合、元の差分ZIPはすでに取り込み済みです。";
+  }
+  return message || "差分ZIPを読み込めませんでした。";
+}
+
 function waitForPaint(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
@@ -1235,7 +1243,7 @@ export function App() {
   ): ImportPreview => {
     const preview = previewImport({ pkg, catalogDocument: document, tagSetDocument, selection, conflictResolution });
     const duplicateIssue = hasImportedPackage(pkg)
-      ? [`同じ package_id / package_version のZIPは既にImport済みです: ${pkg.manifest.package_id} v${pkg.manifest.package_version}`]
+      ? [`このZIPはすでに取り込み済みです。もう一度取り込む必要はありません。${pkg.manifest.package_name} v${pkg.manifest.package_version}`]
       : [];
     const selectionIssue =
       !selection.catalog && !selection.tagsets ? ["Import対象を少なくとも1つ選択してください。"] : [];
@@ -1273,7 +1281,7 @@ export function App() {
       setPackageDialogMode("import");
       setPackageProgress({ phase: "完了しました", current: 6, total: 6 });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "差分ZIPを読み込めませんでした。";
+      const message = importErrorMessage(error);
       store.setError(`差分ZIPを読み込めませんでした。\n処理段階: ${phase}\n原因: ${message}`);
     } finally {
       setPackageBusy(false);
