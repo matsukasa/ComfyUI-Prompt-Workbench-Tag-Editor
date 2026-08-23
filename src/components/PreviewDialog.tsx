@@ -5,14 +5,15 @@ interface Props {
   open: boolean;
   mode: "overwrite" | "saveAs";
   fileName: string;
-  summary: ChangeSummary;
+  targetPath?: string;
+  summary?: ChangeSummary;
   issues: ValidationIssue[];
   saving: boolean;
   onClose: () => void;
   onSave: () => void;
 }
 
-export function PreviewDialog({ open, mode, fileName, summary, issues, saving, onClose, onSave }: Props) {
+export function PreviewDialog({ open, mode, fileName, targetPath, summary, issues, saving, onClose, onSave }: Props) {
   if (!open) return null;
   const errors = issues.filter((issue) => issue.severity === "error");
   const warnings = issues.filter((issue) => issue.severity === "warning");
@@ -29,6 +30,11 @@ export function PreviewDialog({ open, mode, fileName, summary, issues, saving, o
           <div>
             <h2 id="preview-title">変更プレビュー</h2>
             <p>{fileName}</p>
+            {mode === "overwrite" && targetPath && (
+              <p className="preview-target-path" title={targetPath}>
+                上書き先: {targetPath}
+              </p>
+            )}
             <p className="safe-export-note">
               {mode === "overwrite"
                 ? "確認後、現在のファイルを上書き保存します。"
@@ -39,34 +45,6 @@ export function PreviewDialog({ open, mode, fileName, summary, issues, saving, o
             <X />
           </button>
         </header>
-        <div className="preview-summary">
-          <div>
-            <strong>{summary.movedTags}</strong>
-            <span>タグ所属変更</span>
-          </div>
-          <div>
-            <strong>{summary.addedTags}</strong>
-            <span>追加</span>
-          </div>
-          <div>
-            <strong>{summary.deletedTags}</strong>
-            <span>削除</span>
-          </div>
-          <div>
-            <strong>{summary.renamedTags}</strong>
-            <span>名称変更</span>
-          </div>
-          <div>
-            <strong>{summary.changedCategories}</strong>
-            <span>分類編集</span>
-          </div>
-          <div>
-            <strong>
-              {summary.duplicateDelta > 0 ? `+${summary.duplicateDelta}` : summary.duplicateDelta}
-            </strong>
-            <span>重複変化</span>
-          </div>
-        </div>
         <div className="validation-panel">
           <h3>エクスポート前の検証</h3>
           {errors.length === 0 && (

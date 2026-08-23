@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Download,
   FileJson,
+  FileArchive,
   Filter,
   FolderOpen,
   Moon,
@@ -38,7 +39,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   createDragSoundController,
@@ -48,12 +49,13 @@ import {
 import { CategoryTree } from "./components/CategoryTree";
 import { KanbanLane } from "./components/Kanban";
 import { PreviewDialog } from "./components/PreviewDialog";
+import { readPromptWorkbenchDataDir, TagSetEditor, writePromptWorkbenchDataDir } from "./components/TagSetEditor";
 import {
   DEFAULT_CATALOG_FILE_NAME,
   duplicateMap,
   isSafeOutputFileName,
   outputFileName,
-  parseCatalogFile,
+  parseCatalogText,
   serializeCatalog,
   summarizeChanges,
   validateCatalog,
@@ -61,12 +63,36 @@ import {
 import { categoryPath, sortedChildren } from "./domain/operations";
 import {
   favoriteTagKey,
+  favoriteTagSetKey,
   readFavoriteSettings,
   toggleFavorite,
   writeFavoriteSettings,
 } from "./domain/favorites";
-import type { CategoryNode, TagOccurrence } from "./domain/types";
-import { demoDocument } from "./demoCatalog";
+import {
+  comparableTagSetDocument,
+  isTagSetRoot,
+  parseTagSetText,
+  serializeTagSetDocument,
+  summarizeTagSetChanges,
+  tagSetCounts,
+} from "./domain/tagSets";
+import { getWorkbenchMeta } from "./domain/lineage";
+import {
+  createSharePackage,
+  createZip,
+  packageFileName,
+  packageToZip,
+  parsePackageZip,
+  previewImport,
+  readPackageId,
+  readPackageName,
+  writePackageName,
+  type ConflictResolution,
+  type ImportSelection,
+  type ImportPreview,
+  type PackageContentType,
+} from "./domain/packages";
+import type { CatalogDocument, CategoryNode, TagOccurrence, TagSetDocument } from "./domain/types";
 import { isDirty, useCatalogStore } from "./store/catalogStore";
 
 const snapOverlayCenterToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
@@ -100,6 +126,23 @@ interface MoveMenuState {
 }
 
 type SaveMode = "overwrite" | "saveAs";
+type EditorMode = "tags" | "tagSets";
+type PackageDialogMode = "export" | "import";
+
+interface PackageProgress {
+  phase: string;
+  current: number;
+  total: number;
+}
+
+interface DisplayImportHistoryEntry {
+  key: string;
+  packageName: string;
+  packageVersion: number;
+  importedAt: string;
+  containsCatalog: boolean;
+  containsTagSets: boolean;
+}
 
 interface CatalogWritable {
   write: (data: string) => Promise<void>;
@@ -139,6 +182,11 @@ type CatalogWindow = Window & {
 };
 
 const CATALOG_FILE_PICKER_ID = "prompt-workbench-catalog-save";
+const DEFAULT_CATALOG_URL = "/prompt-workbench-data/tag_catalog.json";
+const DEFAULT_TAG_SETS_URL = "/prompt-workbench-data/tag_sets.json";
+const REVIEW_MAJOR_ID = "favorite-review:major";
+const REVIEW_MEDIUM_ID = "favorite-review:medium";
+const REVIEW_SMALL_ID = "favorite-review:small";
 const CATALOG_FILE_PICKER_TYPES = [
   {
     description: "JSONタグファイル",
@@ -153,6 +201,116 @@ function catalogHandlePath(handle: CatalogFileHandle | null): string | undefined
 function catalogFilePath(file: File, handle: CatalogFileHandle | null): string | undefined {
   const fileWithPath = file as CatalogFileWithPath;
   return catalogHandlePath(handle) ?? fileWithPath.fullPath ?? fileWithPath.path ?? fileWithPath.webkitRelativePath;
+}
+
+function defaultDataDisplayPath(response: Response, route: string): string {
+  const encodedPath = response.headers.get("X-Prompt-Workbench-File-Path");
+  if (encodedPath) {
+    try {
+      return decodeURIComponent(encodedPath);
+    } catch {
+      return encodedPath;
+    }
+  }
+  return new URL(route, window.location.href).href;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize("NFKC").trim().toLocaleLowerCase().replace(/[\s_-]+/gu, " ");
+}
+
+function parseGlobalSearchPattern(query: string): { empty: boolean; test: (text: string) => boolean } {
+  const raw = query.trim();
+  if (!raw) return { empty: true, test: () => true };
+  const normalized = normalizeSearchText(raw);
+  const regexSource = raw.startsWith("re:")
+    ? raw.slice(3)
+    : raw.startsWith("/") && raw.lastIndexOf("/") > 0
+      ? raw.slice(1, raw.lastIndexOf("/"))
+      : "";
+  if (!regexSource) {
+    return { empty: false, test: (text) => normalizeSearchText(text).includes(normalized) };
+  }
+  try {
+    const matcher = new RegExp(regexSource, "iu");
+    return { empty: false, test: (text) => matcher.test(normalizeSearchText(text)) };
+  } catch {
+    const fallback = normalizeSearchText(regexSource);
+    return { empty: false, test: (text) => normalizeSearchText(text).includes(fallback) };
+  }
+}
+
+function emptyCatalogDocument(fileName: string, filePath?: string): CatalogDocument {
+  return {
+    fileName,
+    filePath,
+    format: "bundled",
+    formatMeta: {
+      bom: false,
+      newline: "\n",
+      indent: 2,
+      finalNewline: true,
+    },
+    original: { schema_version: 1, major_categories: [] },
+    categories: [],
+    tags: [],
+  };
+}
+
+function ensureCategory(
+  categories: CategoryNode[],
+  id: string,
+  level: CategoryNode["level"],
+  parentId: string,
+  labelJa: string,
+  order: number,
+): void {
+  const existing = categories.find((category) => category.id === id);
+  if (existing) {
+    existing.level = level;
+    existing.parentId = parentId;
+    existing.labelJa = labelJa;
+    return;
+  }
+  categories.push({
+    id,
+    level,
+    parentId,
+    labelJa,
+    labelEn: "",
+    descriptionJa: "",
+    order,
+    raw: {},
+  });
+}
+
+function addMissingFavoriteTags(document: CatalogDocument, favorites: Iterable<string>): CatalogDocument {
+  const favoriteKeys = [...new Set([...favorites].map(favoriteTagKey).filter(Boolean))];
+  if (!favoriteKeys.length) return document;
+  const existingKeys = new Set(document.tags.map((tag) => favoriteTagKey(tag.prompt)));
+  const missingKeys = favoriteKeys.filter((key) => !existingKeys.has(key));
+  if (!missingKeys.length) return document;
+
+  const next = structuredClone(document);
+  const nextOrder = next.categories.length;
+  ensureCategory(next.categories, REVIEW_MAJOR_ID, "major", "", "要確認", nextOrder);
+  ensureCategory(next.categories, REVIEW_MEDIUM_ID, "medium", REVIEW_MAJOR_ID, "未分類", nextOrder + 1);
+  ensureCategory(next.categories, REVIEW_SMALL_ID, "small", REVIEW_MEDIUM_ID, "未分類", nextOrder + 2);
+
+  let tagOrder = next.tags.filter((tag) => tag.categoryId === REVIEW_SMALL_ID).length;
+  for (const prompt of missingKeys) {
+    next.tags.push({
+      uid: `favorite-review:${crypto.randomUUID()}`,
+      sourceId: undefined,
+      categoryId: REVIEW_SMALL_ID,
+      prompt,
+      translationJa: "",
+      aliases: [],
+      order: tagOrder++,
+      raw: {},
+    });
+  }
+  return next;
 }
 
 function downloadFile(
@@ -171,13 +329,87 @@ function downloadFile(
   URL.revokeObjectURL(url);
 }
 
+function downloadTextFile(name: string, source: string): void {
+  const blob = new Blob([source], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBytesFile(name: string, bytes: Uint8Array, type: string): void {
+  const blob = new Blob([bytes], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function importBackupFileName(now = new Date()): string {
+  const part = (value: number) => String(value).padStart(2, "0");
+  return `PromptWorkbench_ImportBackup_${now.getFullYear()}${part(now.getMonth() + 1)}${part(now.getDate())}_${part(now.getHours())}${part(now.getMinutes())}${part(now.getSeconds())}.zip`;
+}
+
+function packageContentLabel(value: PackageContentType): string {
+  if (value === "Catalog") return "タグカタログのみ書き出し";
+  if (value === "TagSets") return "タグセットのみ書き出し";
+  return "両方書き出し";
+}
+
+function formatImportDate(value: string): string {
+  if (!value) return "日時不明";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+const IMPORT_HISTORY_KEY = "prompt-workbench:imported-share-packages";
+
+function importHistoryKey(pkg: ImportPreview["pkg"]): string {
+  return `${pkg.manifest.package_id}@${pkg.manifest.package_version}`;
+}
+
+function readImportHistory(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(IMPORT_HISTORY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function hasImportedPackage(pkg: ImportPreview["pkg"]): boolean {
+  return readImportHistory().includes(importHistoryKey(pkg));
+}
+
+function rememberImportedPackage(pkg: ImportPreview["pkg"]): void {
+  try {
+    const next = [importHistoryKey(pkg), ...readImportHistory().filter((value) => value !== importHistoryKey(pkg))].slice(0, 100);
+    window.localStorage.setItem(IMPORT_HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    // Import history is safety metadata; applying the package should not fail if browser storage is unavailable.
+  }
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
 async function writeCatalogFile(
   handle: CatalogFileHandle,
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
 ): Promise<void> {
+  await writeTextFile(handle, serializeCatalog(document));
+}
+
+async function writeTextFile(handle: CatalogFileHandle, source: string): Promise<void> {
   const writable = await handle.createWritable();
   try {
-    await writable.write(serializeCatalog(document));
+    await writable.write(source);
     await writable.close();
   } catch (error) {
     await writable.abort?.().catch(() => undefined);
@@ -185,7 +417,31 @@ async function writeCatalogFile(
   }
 }
 
-function useKeyboardShortcuts(): void {
+async function readUtf8File(file: File): Promise<string> {
+  if (!file.name.toLowerCase().endsWith(".json")) throw new Error("対応形式はJSON（.json）のみです。");
+  if (file.size > 8 * 1024 * 1024) throw new Error("ファイルが8MBを超えています。");
+  const bytes = await file.arrayBuffer();
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function looksLikeTagSetJson(source: string): boolean {
+  try {
+    const clean = source.startsWith("\uFEFF") ? source.slice(1) : source;
+    return isTagSetRoot(JSON.parse(clean));
+  } catch {
+    return false;
+  }
+}
+
+function useKeyboardShortcuts({
+  tagSetMode,
+  undoTagSet,
+  redoTagSet,
+}: {
+  tagSetMode: boolean;
+  undoTagSet: () => void;
+  redoTagSet: () => void;
+}): void {
   const undo = useCatalogStore((state) => state.undo);
   const redo = useCatalogStore((state) => state.redo);
   useEffect(() => {
@@ -193,31 +449,48 @@ function useKeyboardShortcuts(): void {
       if (!(event.ctrlKey || event.metaKey)) return;
       if (event.key.toLocaleLowerCase() === "z") {
         event.preventDefault();
-        if (event.shiftKey) redo();
+        if (event.shiftKey) {
+          if (tagSetMode) redoTagSet();
+          else redo();
+        } else if (tagSetMode) undoTagSet();
         else undo();
       }
       if (event.key.toLocaleLowerCase() === "y") {
         event.preventDefault();
-        redo();
+        if (tagSetMode) redoTagSet();
+        else redo();
       }
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [undo, redo]);
+  }, [redo, redoTagSet, tagSetMode, undo, undoTagSet]);
 }
 
 export function App() {
   const store = useCatalogStore();
   const appShellRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const packageInput = useRef<HTMLInputElement>(null);
   const laneScroller = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [soundEnabled, setSoundEnabled] = useState(readDragSoundPreference);
   const [favoriteTags, setFavoriteTags] = useState(() => readFavoriteSettings().favorites);
+  const [favoriteTagSets, setFavoriteTagSets] = useState(() => readFavoriteSettings().favoriteTagSets);
+  const [promptWorkbenchDataDir, setPromptWorkbenchDataDir] = useState(readPromptWorkbenchDataDir);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
+  const [packageDialogMode, setPackageDialogMode] = useState<PackageDialogMode | null>(null);
+  const [packageName, setPackageName] = useState(readPackageName);
+  const [packageVersion, setPackageVersion] = useState(1);
+  const [packageContentType, setPackageContentType] = useState<PackageContentType>("Full");
+  const [packagePreview, setPackagePreview] = useState<ImportPreview | null>(null);
+  const [packageImportSelection, setPackageImportSelection] = useState<ImportSelection>({ catalog: true, tagsets: true });
+  const [packageConflictResolution, setPackageConflictResolution] = useState<ConflictResolution>("stop");
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [packageProgress, setPackageProgress] = useState<PackageProgress | null>(null);
   const [currentCatalogFileHandle, setCurrentCatalogFileHandle] = useState<CatalogFileHandle | null>(null);
+  const [currentTagSetFileHandle, setCurrentTagSetFileHandle] = useState<CatalogFileHandle | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeDrag, setActiveDrag] = useState<{ type: "tag" | "category"; id: string } | null>(null);
   const [overCategoryId, setOverCategoryId] = useState<string | null>(null);
@@ -228,6 +501,14 @@ export function App() {
   const [moveMenu, setMoveMenu] = useState<MoveMenuState | null>(null);
   const [moveDestinationQuery, setMoveDestinationQuery] = useState("");
   const [pendingRevealTagId, setPendingRevealTagId] = useState<string | null>(null);
+  const [tagSetDocument, setTagSetDocument] = useState<TagSetDocument | null>(null);
+  const [tagSetBaseline, setTagSetBaseline] = useState<string | null>(null);
+  const [tagSetBaselineDocument, setTagSetBaselineDocument] = useState<TagSetDocument | null>(null);
+  const [factoryCatalogDocument, setFactoryCatalogDocument] = useState<CatalogDocument | null>(null);
+  const [factoryTagSetDocument, setFactoryTagSetDocument] = useState<TagSetDocument | null>(null);
+  const [tagSetHistory, setTagSetHistory] = useState<TagSetDocument[]>([]);
+  const [tagSetFuture, setTagSetFuture] = useState<TagSetDocument[]>([]);
+  const [editorMode, setEditorMode] = useState<EditorMode>("tags");
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const moveSearchRef = useRef<HTMLInputElement>(null);
   const previousDragDelta = useRef({ x: 0, y: 0 });
@@ -236,16 +517,109 @@ export function App() {
   const trailTimer = useRef<number | null>(null);
   const recentMoveTimer = useRef<number | null>(null);
   const dragSounds = useRef(createDragSoundController());
+  const loadedDefaultFiles = useRef(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  useKeyboardShortcuts();
+  const isTagSetMode = editorMode === "tagSets";
+
+  const replaceTagSetDocument = useCallback((nextDocument: TagSetDocument | null) => {
+    setTagSetDocument(nextDocument);
+    setTagSetHistory([]);
+    setTagSetFuture([]);
+  }, []);
+
+  const editTagSetDocument = useCallback((nextDocument: TagSetDocument) => {
+    setTagSetDocument((currentDocument) => {
+      if (!currentDocument) return nextDocument;
+      setTagSetHistory((currentHistory) => [...currentHistory, currentDocument].slice(-100));
+      setTagSetFuture([]);
+      return nextDocument;
+    });
+  }, []);
+
+  const undoTagSet = useCallback(() => {
+    setTagSetDocument((currentDocument) => {
+      if (!currentDocument) return currentDocument;
+      let previousDocument: TagSetDocument | undefined;
+      setTagSetHistory((currentHistory) => {
+        previousDocument = currentHistory.at(-1);
+        return previousDocument ? currentHistory.slice(0, -1) : currentHistory;
+      });
+      if (!previousDocument) return currentDocument;
+      setTagSetFuture((currentFuture) => [currentDocument, ...currentFuture].slice(0, 100));
+      return previousDocument;
+    });
+  }, []);
+
+  const redoTagSet = useCallback(() => {
+    setTagSetDocument((currentDocument) => {
+      if (!currentDocument) return currentDocument;
+      let nextDocument: TagSetDocument | undefined;
+      setTagSetFuture((currentFuture) => {
+        nextDocument = currentFuture[0];
+        return nextDocument ? currentFuture.slice(1) : currentFuture;
+      });
+      if (!nextDocument) return currentDocument;
+      setTagSetHistory((currentHistory) => [...currentHistory, currentDocument].slice(-100));
+      return nextDocument;
+    });
+  }, []);
+
+  useKeyboardShortcuts({ tagSetMode: isTagSetMode, undoTagSet, redoTagSet });
+
+  const updateFavorites = (nextFavorites: string[]) => {
+    setFavoriteTags(nextFavorites);
+    writeFavoriteSettings({ favorites: nextFavorites, favoriteTagSets });
+  };
 
   useEffect(() => {
-    if (!store.document) store.load(demoDocument);
+    if (loadedDefaultFiles.current) return;
+    loadedDefaultFiles.current = true;
+    const loadDefaultFiles = async () => {
+      try {
+        const response = await fetch(DEFAULT_CATALOG_URL);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const filePath = defaultDataDisplayPath(response, DEFAULT_CATALOG_URL);
+        const source = await response.text();
+        const storedFavorites = readFavoriteSettings().favorites;
+        const parsed = {
+          ...parseCatalogText(source, "tag_catalog.json"),
+          filePath,
+        };
+        setFactoryCatalogDocument(structuredClone(parsed));
+        store.load(addMissingFavoriteTags(parsed, storedFavorites));
+        updateFavorites(storedFavorites);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        store.load(emptyCatalogDocument("tag_catalog.json", new URL(DEFAULT_CATALOG_URL, window.location.href).href));
+        store.setError(`tag_catalog.json を読み込めませんでした: ${detail}`);
+      }
+
+      try {
+        const response = await fetch(DEFAULT_TAG_SETS_URL);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const filePath = defaultDataDisplayPath(response, DEFAULT_TAG_SETS_URL);
+        const source = await response.text();
+        const parsed = {
+          ...parseTagSetText(source, "tag_sets.json"),
+          filePath,
+        };
+        setFactoryTagSetDocument(structuredClone(parsed));
+        replaceTagSetDocument(parsed);
+        setTagSetBaseline(comparableTagSetDocument(parsed));
+        setTagSetBaselineDocument(structuredClone(parsed));
+      } catch {
+        setToast({ message: "タグカタログを読み込みました", detail: "タグセット設定は手動で開いてください" });
+      }
+    };
+    void loadDefaultFiles();
   }, [store]);
-  const dirty = isDirty(store);
+  const tagSetDirty = tagSetDocument
+    ? comparableTagSetDocument(tagSetDocument) !== tagSetBaseline
+    : false;
+  const dirty = isDirty(store) || tagSetDirty;
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
       if (dirty) {
@@ -328,9 +702,12 @@ export function App() {
         : [],
     [document, store.selectedMediumId],
   );
-  const issues = document ? validateCatalog(document) : [];
+  const activeFileHandle = isTagSetMode ? currentTagSetFileHandle : currentCatalogFileHandle;
+  const issues = isTagSetMode ? [] : document ? validateCatalog(document) : [];
   const summary =
-    document && baseline
+    isTagSetMode && tagSetDocument && tagSetBaselineDocument
+      ? summarizeTagSetChanges(tagSetBaselineDocument, tagSetDocument)
+      : document && baseline
       ? summarizeChanges(baseline, document)
       : {
           movedTags: 0,
@@ -340,26 +717,31 @@ export function App() {
           changedCategories: 0,
           duplicateDelta: 0,
         };
-  const outputName = document ? outputFileName(document.fileName) : "catalog.json";
+  const catalogExportBaseline = factoryCatalogDocument ?? baseline;
+  const tagSetExportBaseline = factoryTagSetDocument ?? tagSetBaselineDocument;
+  const activeFileName = isTagSetMode
+    ? (tagSetDocument?.fileName ?? "tag_sets.json")
+    : (document?.fileName ?? "catalog.json");
+  const outputName = isTagSetMode ? activeFileName : document ? outputFileName(document.fileName) : "catalog.json";
   const focusedCategoryId = useMemo(() => {
     const tagId = activeDrag?.type === "tag" ? activeDrag.id : store.anchorTagId;
     return tagId ? (document?.tags.find((tag) => tag.uid === tagId)?.categoryId ?? null) : null;
   }, [activeDrag, document, store.anchorTagId]);
   const recentlyMoved = useMemo(() => new Set(recentlyMovedTagIds), [recentlyMovedTagIds]);
   const favoriteTagKeys = useMemo(() => new Set(favoriteTags), [favoriteTags]);
+  const favoriteTagSetKeys = useMemo(() => new Set(favoriteTagSets), [favoriteTagSets]);
   const validTagTarget = useMemo(() => {
     if (activeDrag?.type !== "tag" || !overCategoryId || !document) return false;
     return document.categories.some(
       (category) => category.id === overCategoryId && category.level === "small",
     );
   }, [activeDrag, document, overCategoryId]);
-  const normalizedGlobalQuery = store.globalQuery.trim().toLocaleLowerCase();
+  const globalSearchPattern = useMemo(() => parseGlobalSearchPattern(store.globalQuery), [store.globalQuery]);
+  const hasGlobalQuery = !globalSearchPattern.empty;
   const globalSearchResults = useMemo(() => {
-    if (!document || !normalizedGlobalQuery) return [];
+    if (!document || !hasGlobalQuery) return [];
     return document.tags.filter((tag) => {
-      const matches = `${tag.prompt} ${tag.translationJa} ${tag.aliases.join(" ")}`
-        .toLocaleLowerCase()
-        .includes(normalizedGlobalQuery);
+      const matches = globalSearchPattern.test(`${tag.prompt} ${tag.translationJa} ${tag.aliases.join(" ")}`);
       return (
         matches &&
         (!store.showDuplicatesOnly ||
@@ -372,7 +754,8 @@ export function App() {
     document,
     duplicateCounts,
     favoriteTagKeys,
-    normalizedGlobalQuery,
+    globalSearchPattern,
+    hasGlobalQuery,
     selected,
     store.showDuplicatesOnly,
     store.showFavoritesOnly,
@@ -414,7 +797,7 @@ export function App() {
   }, [moveMenu]);
 
   useEffect(() => {
-    if (!pendingRevealTagId || normalizedGlobalQuery) return;
+    if (!pendingRevealTagId || hasGlobalQuery) return;
     const timer = window.setTimeout(() => {
       const row = window.document.querySelector<HTMLElement>(`[data-tag-id="${CSS.escape(pendingRevealTagId)}"]`);
       if (!row) return;
@@ -423,19 +806,59 @@ export function App() {
       setPendingRevealTagId(null);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [normalizedGlobalQuery, pendingRevealTagId, store.selectedMediumId]);
+  }, [hasGlobalQuery, pendingRevealTagId, store.selectedMediumId]);
+
+  const packageExportPreview = useMemo(() => {
+    if (packageDialogMode !== "export" || !document) return null;
+    const includeCatalog = packageContentType === "Catalog" || packageContentType === "Full";
+    const includeTagSets = packageContentType === "TagSets" || packageContentType === "Full";
+    try {
+      return createSharePackage({
+        packageName,
+        packageId: readPackageId(),
+        packageVersion,
+        includeCatalog,
+        includeTagSets,
+        catalogBaseline: catalogExportBaseline,
+        catalogDocument: document,
+        tagSetBaseline: tagSetExportBaseline,
+        tagSetDocument,
+      });
+    } catch {
+      return null;
+    }
+  }, [catalogExportBaseline, document, packageContentType, packageDialogMode, packageName, packageVersion, tagSetDocument, tagSetExportBaseline]);
+  const importHistory = useMemo<DisplayImportHistoryEntry[]>(() => {
+    const entries = new Map<string, DisplayImportHistoryEntry>();
+    for (const root of [document?.original, tagSetDocument?.original]) {
+      if (!root) continue;
+      for (const [key, item] of Object.entries(getWorkbenchMeta(root).imports)) {
+        const current = entries.get(key);
+        entries.set(key, {
+          key,
+          packageName: item.packageName,
+          packageVersion: item.packageVersion,
+          importedAt: item.importedAt || current?.importedAt || "",
+          containsCatalog: Boolean(item.containsCatalog || current?.containsCatalog),
+          containsTagSets: Boolean(item.containsTagSets || current?.containsTagSets),
+        });
+      }
+    }
+    return [...entries.values()].sort((left, right) => (right.importedAt || "").localeCompare(left.importedAt || ""));
+  }, [document, tagSetDocument]);
 
   if (!document || !baseline) return <main className="loading-screen">カタログを準備しています…</main>;
 
   const catalogWindow = window as CatalogWindow;
   const isDefaultCatalogFile =
+    !isTagSetMode &&
     document.fileName.trim().toLocaleLowerCase() === DEFAULT_CATALOG_FILE_NAME.toLocaleLowerCase();
   const canOverwriteCurrentFile =
-    Boolean(currentCatalogFileHandle) ||
-    (!isDefaultCatalogFile && Boolean(catalogWindow.showSaveFilePicker));
+    Boolean(activeFileHandle) ||
+    ((!isDefaultCatalogFile || isTagSetMode) && Boolean(catalogWindow.showSaveFilePicker));
   const needsLocalhostForOverwrite =
-    !isDefaultCatalogFile &&
-    !currentCatalogFileHandle &&
+    (!isDefaultCatalogFile || isTagSetMode) &&
+    !activeFileHandle &&
     !catalogWindow.showSaveFilePicker &&
     !window.isSecureContext &&
     window.location.hostname !== "localhost";
@@ -452,9 +875,24 @@ export function App() {
   const loadSelectedFile = async (file?: File, fileHandle: CatalogFileHandle | null = null) => {
     if (!file) return;
     try {
-      const parsed = await parseCatalogFile(file, catalogFilePath(file, fileHandle));
-      store.load(parsed);
-      setCurrentCatalogFileHandle(fileHandle);
+      const source = await readUtf8File(file);
+      const filePath = catalogFilePath(file, fileHandle);
+      if (looksLikeTagSetJson(source)) {
+        const parsed = parseTagSetText(source, file.name);
+        const nextDocument = filePath ? { ...parsed, filePath } : parsed;
+        replaceTagSetDocument(nextDocument);
+        setTagSetBaseline(comparableTagSetDocument(nextDocument));
+        setTagSetBaselineDocument(structuredClone(nextDocument));
+        setCurrentTagSetFileHandle(fileHandle);
+        store.clearSelection();
+      } else {
+        const storedFavorites = readFavoriteSettings().favorites;
+        const parsed = parseCatalogText(source, file.name);
+        const nextDocument = filePath ? { ...parsed, filePath } : parsed;
+        store.load(addMissingFavoriteTags(nextDocument, storedFavorites));
+        setCurrentCatalogFileHandle(fileHandle);
+        updateFavorites(storedFavorites);
+      }
       setToast({ message: `${file.name} を読み込みました` });
     } catch (error) {
       store.setError(error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
@@ -493,16 +931,39 @@ export function App() {
           suggestedName: outputName,
           types: CATALOG_FILE_PICKER_TYPES,
         };
-        if (currentCatalogFileHandle) pickerOptions.startIn = currentCatalogFileHandle;
+        if (activeFileHandle) pickerOptions.startIn = activeFileHandle;
         const savedFileHandle = await catalogWindow.showSaveFilePicker(pickerOptions);
-        await writeCatalogFile(savedFileHandle, document);
-        setCurrentCatalogFileHandle(savedFileHandle);
-        store.markSaved(savedFileHandle.name, catalogHandlePath(savedFileHandle));
+        if (isTagSetMode && tagSetDocument) {
+          const source = serializeTagSetDocument(tagSetDocument);
+          await writeTextFile(savedFileHandle, source);
+          const savedDocument = {
+            ...tagSetDocument,
+            fileName: savedFileHandle.name,
+            filePath: catalogHandlePath(savedFileHandle),
+          };
+          setTagSetDocument(savedDocument);
+          setTagSetBaseline(comparableTagSetDocument(savedDocument));
+          setTagSetBaselineDocument(structuredClone(savedDocument));
+          setCurrentTagSetFileHandle(savedFileHandle);
+        } else {
+          await writeCatalogFile(savedFileHandle, document);
+          store.markSaved(savedFileHandle.name, catalogHandlePath(savedFileHandle));
+          setCurrentCatalogFileHandle(savedFileHandle);
+        }
         setToast({ message: `${savedFileHandle.name} に別名保存しました` });
       } else {
-        downloadFile(document, outputName);
-        setCurrentCatalogFileHandle(null);
-        store.markSaved(outputName);
+        if (isTagSetMode && tagSetDocument) downloadTextFile(outputName, serializeTagSetDocument(tagSetDocument));
+        else downloadFile(document, outputName);
+        if (isTagSetMode && tagSetDocument) {
+          const savedDocument = { ...tagSetDocument, fileName: outputName, filePath: undefined };
+          setTagSetDocument(savedDocument);
+          setTagSetBaseline(comparableTagSetDocument(savedDocument));
+          setTagSetBaselineDocument(structuredClone(savedDocument));
+          setCurrentTagSetFileHandle(null);
+        } else {
+          store.markSaved(outputName);
+          setCurrentCatalogFileHandle(null);
+        }
         setToast({ message: `${outputName} をダウンロードしました` });
       }
       setSaveMode(null);
@@ -517,12 +978,12 @@ export function App() {
     }
   };
   const overwriteCurrentFile = async () => {
-    let overwriteHandle = currentCatalogFileHandle;
-    if (!overwriteHandle && !isDefaultCatalogFile && catalogWindow.showSaveFilePicker) {
+    let overwriteHandle = activeFileHandle;
+    if (!overwriteHandle && (!isDefaultCatalogFile || isTagSetMode) && catalogWindow.showSaveFilePicker) {
       try {
         overwriteHandle = await catalogWindow.showSaveFilePicker({
           id: CATALOG_FILE_PICKER_ID,
-          suggestedName: document.fileName,
+          suggestedName: activeFileName,
           types: CATALOG_FILE_PICKER_TYPES,
         });
       } catch (error) {
@@ -544,10 +1005,24 @@ export function App() {
     }
     setSaving(true);
     try {
-      await writeCatalogFile(overwriteHandle, document);
-      setCurrentCatalogFileHandle(overwriteHandle);
-      store.markSaved(overwriteHandle.name, catalogHandlePath(overwriteHandle) ?? document.filePath);
-      store.clearSelection();
+      if (isTagSetMode && tagSetDocument) {
+        const source = serializeTagSetDocument(tagSetDocument);
+        await writeTextFile(overwriteHandle, source);
+        const savedDocument = {
+          ...tagSetDocument,
+          fileName: overwriteHandle.name,
+          filePath: catalogHandlePath(overwriteHandle) ?? tagSetDocument.filePath,
+        };
+        setTagSetDocument(savedDocument);
+        setTagSetBaseline(comparableTagSetDocument(savedDocument));
+        setTagSetBaselineDocument(structuredClone(savedDocument));
+        setCurrentTagSetFileHandle(overwriteHandle);
+      } else {
+        await writeCatalogFile(overwriteHandle, document);
+        store.markSaved(overwriteHandle.name, catalogHandlePath(overwriteHandle) ?? document.filePath);
+        store.clearSelection();
+        setCurrentCatalogFileHandle(overwriteHandle);
+      }
       setSaveMode(null);
       setToast({ message: `${overwriteHandle.name} を上書き保存しました` });
     } catch (error) {
@@ -561,6 +1036,419 @@ export function App() {
     if (saveMode === "overwrite") void overwriteCurrentFile();
     else if (saveMode === "saveAs") void saveAsNewFile();
   };
+  const exportPackage = async () => {
+    setPackageBusy(true);
+    let phase = "差分を確認しています";
+    setPackageProgress({ phase, current: 1, total: 5 });
+    try {
+      await waitForPaint();
+      const includeCatalog = packageContentType === "Catalog" || packageContentType === "Full";
+      const includeTagSets = packageContentType === "TagSets" || packageContentType === "Full";
+      phase = "patchを生成しています";
+      setPackageProgress({ phase, current: 2, total: 5 });
+      await waitForPaint();
+      const pkg = createSharePackage({
+        packageName,
+        packageId: readPackageId(),
+        packageVersion,
+        includeCatalog,
+        includeTagSets,
+        catalogBaseline: catalogExportBaseline,
+        catalogDocument: document,
+        tagSetBaseline: tagSetExportBaseline,
+        tagSetDocument,
+      });
+      if (!pkg.manifest.contains.catalog && !pkg.manifest.contains.tagsets) {
+        store.setError("書き出せる差分がありません。タグカタログまたはタグセットを読み込んでください。");
+        return;
+      }
+      writePackageName(packageName);
+      phase = "manifestとCSVを生成しています";
+      setPackageProgress({ phase, current: 3, total: 5 });
+      await waitForPaint();
+      const zipName = packageFileName(packageName, packageContentType, packageVersion);
+      phase = "ZIPを作成しています";
+      setPackageProgress({ phase, current: 4, total: 5 });
+      await waitForPaint();
+      downloadBytesFile(zipName, packageToZip(pkg), "application/zip");
+      setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
+      setToast({
+        message: `${zipName} を書き出しました`,
+        detail: `Catalog ${pkg.catalogPatch?.operations.length ?? 0}件 / TagSets ${pkg.tagsetPatch?.operations.length ?? 0}件`,
+      });
+      setPackageDialogMode(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "差分を書き出せませんでした。";
+      store.setError(`差分を書き出せませんでした。\n処理段階: ${phase}\n原因: ${message}`);
+    } finally {
+      setPackageBusy(false);
+      window.setTimeout(() => setPackageProgress(null), 500);
+    }
+  };
+  const openPackageFile = () => {
+    if (packageInput.current) packageInput.current.value = "";
+    packageInput.current?.click();
+  };
+  const buildImportPreview = (
+    pkg: ImportPreview["pkg"],
+    selection: ImportSelection,
+    conflictResolution: ConflictResolution = packageConflictResolution,
+  ): ImportPreview => {
+    const preview = previewImport({ pkg, catalogDocument: document, tagSetDocument, selection, conflictResolution });
+    const duplicateIssue = hasImportedPackage(pkg)
+      ? [`同じ package_id / package_version のZIPは既にImport済みです: ${pkg.manifest.package_id} v${pkg.manifest.package_version}`]
+      : [];
+    const selectionIssue =
+      !selection.catalog && !selection.tagsets ? ["Import対象を少なくとも1つ選択してください。"] : [];
+    return duplicateIssue.length || selectionIssue.length
+      ? { ...preview, issues: [...preview.issues, ...duplicateIssue, ...selectionIssue] }
+      : preview;
+  };
+  const changeConflictResolution = (resolution: ConflictResolution) => {
+    setPackageConflictResolution(resolution);
+    if (packagePreview) setPackagePreview(buildImportPreview(packagePreview.pkg, packageImportSelection, resolution));
+  };
+  const loadPackageFile = async (file?: File) => {
+    if (!file) return;
+    setPackageBusy(true);
+    let phase = "ZIPを検証しています";
+    setPackageProgress({ phase, current: 1, total: 5 });
+    try {
+      await waitForPaint();
+      if (!file.name.toLowerCase().endsWith(".zip")) throw new Error("差分ZIPを選んでください。");
+      if (file.size > 16 * 1024 * 1024) throw new Error("ZIPファイルが16MBを超えています。");
+      phase = "manifest.jsonを確認しています";
+      setPackageProgress({ phase, current: 2, total: 5 });
+      await waitForPaint();
+      const pkg = parsePackageZip(new Uint8Array(await file.arrayBuffer()));
+      phase = "競合を確認しています";
+      setPackageProgress({ phase, current: 3, total: 5 });
+      await waitForPaint();
+      const selection = { catalog: pkg.manifest.contains.catalog, tagsets: pkg.manifest.contains.tagsets };
+      setPackageImportSelection(selection);
+      setPackageConflictResolution("stop");
+      phase = "previewを作成しています";
+      setPackageProgress({ phase, current: 4, total: 5 });
+      await waitForPaint();
+      setPackagePreview(buildImportPreview(pkg, selection));
+      setPackageDialogMode("import");
+      setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "差分ZIPを読み込めませんでした。";
+      store.setError(`差分ZIPを読み込めませんでした。\n処理段階: ${phase}\n原因: ${message}`);
+    } finally {
+      setPackageBusy(false);
+      window.setTimeout(() => setPackageProgress(null), 500);
+    }
+  };
+  const applyPackageImport = async () => {
+    if (
+      !packagePreview ||
+      packagePreview.issues.length ||
+      (packagePreview.conflicts.length && packageConflictResolution === "stop")
+    )
+      return;
+    if (!window.confirm("Importを適用します。現在のファイルは未保存の編集状態になり、保存するまで元ファイルは上書きされません。続行しますか？")) return;
+    const previousCatalog = document ? structuredClone(document) : null;
+    const previousTagSets = tagSetDocument ? structuredClone(tagSetDocument) : null;
+    setPackageBusy(true);
+    let phase = "バックアップを作成しています";
+    setPackageProgress({ phase, current: 1, total: 5 });
+    try {
+      await waitForPaint();
+      const backupFiles: Record<string, string> = {};
+      if (previousCatalog) backupFiles["tag_catalog.before_import.json"] = serializeCatalog(previousCatalog);
+      if (previousTagSets) backupFiles["tag_sets.before_import.json"] = serializeTagSetDocument(previousTagSets);
+      backupFiles["import_manifest.json"] = `${JSON.stringify(packagePreview.pkg.manifest, null, 2)}\n`;
+      downloadBytesFile(importBackupFileName(), createZip(backupFiles), "application/zip");
+      phase = "タグカタログを適用しています";
+      setPackageProgress({ phase, current: 2, total: 5 });
+      await waitForPaint();
+      if (packagePreview.nextCatalog) store.replaceDocument(packagePreview.nextCatalog);
+      phase = "タグセットを適用しています";
+      setPackageProgress({ phase, current: 3, total: 5 });
+      await waitForPaint();
+      if (packagePreview.nextTagSets) editTagSetDocument(packagePreview.nextTagSets);
+      phase = "Import履歴を記録しています";
+      setPackageProgress({ phase, current: 4, total: 5 });
+      await waitForPaint();
+      rememberImportedPackage(packagePreview.pkg);
+      setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
+      setToast({
+        message: "Importを適用しました",
+        detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${packagePreview.summary.movedTags + packagePreview.summary.renamedTags + packagePreview.summary.changedCategories}件`,
+        undoable: true,
+      });
+      setPackagePreview(null);
+      setPackageDialogMode(null);
+      setPackageBusy(false);
+      window.setTimeout(() => setPackageProgress(null), 500);
+    } catch (error) {
+      setPackageProgress({ phase: "変更を取り消しています", current: 1, total: 4 });
+      await waitForPaint();
+      setPackageProgress({ phase: "バックアップから復元しています", current: 2, total: 4 });
+      await waitForPaint();
+      if (previousCatalog) store.replaceDocument(previousCatalog);
+      if (previousTagSets) editTagSetDocument(previousTagSets);
+      setPackageProgress({ phase: "整合性を確認しています", current: 3, total: 4 });
+      await waitForPaint();
+      setPackageProgress({ phase: "元の状態へ復元しました", current: 4, total: 4 });
+      setPackageBusy(false);
+      window.setTimeout(() => setPackageProgress(null), 900);
+      const message = error instanceof Error ? error.message : "Importを適用できませんでした。";
+      store.setError(`Importを適用できませんでした。\n処理段階: ${phase}\n原因: ${message}\n変更は適用前の状態へ戻しました。`);
+    }
+  };
+  const packageImportDisabledReason =
+    packageDialogMode !== "import"
+      ? ""
+      : packageBusy
+        ? "Import処理中のため、完了するまで適用できません。"
+        : !packagePreview
+          ? "ImportするZIPを選択すると適用できます。"
+          : packagePreview.issues.length > 0
+            ? `Import前の確認でエラーがあります: ${packagePreview.issues[0]}`
+            : packagePreview.conflicts.length > 0 && packageConflictResolution === "stop"
+              ? `競合があるため適用できません: ${packagePreview.conflicts[0]}`
+              : "";
+  const packageDialog = packageDialogMode ? (
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => setPackageDialogMode(null)}>
+      <section
+        className="preview-dialog package-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="package-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <h2 id="package-dialog-title">
+              {packageDialogMode === "export" ? "差分を書き出す" : "共有パッケージを読み込む"}
+            </h2>
+            <p>
+              {packageDialogMode === "export"
+                ? "Factory Default / 読み込み時の状態との差分だけをZIPにまとめます。"
+                : "ZIP内のmanifest.jsonを確認し、適用前に変更内容を表示します。"}
+            </p>
+          </div>
+          <button className="icon-button" type="button" onClick={() => setPackageDialogMode(null)} aria-label="閉じる">
+            <X />
+          </button>
+        </header>
+        {packageProgress && (
+          <div className="package-progress" role="status" aria-live="polite">
+            <div>
+              <strong>{packageProgress.phase}</strong>
+              <span>
+                {Math.round((packageProgress.current / packageProgress.total) * 100)}% / {packageProgress.current} / {packageProgress.total}
+              </span>
+            </div>
+            <progress value={packageProgress.current} max={packageProgress.total} />
+          </div>
+        )}
+        {packageDialogMode === "export" ? (
+          <div className="package-panel">
+            <label className="settings-field">
+              <span>パッケージ名</span>
+              <input
+                value={packageName}
+                onChange={(event) => setPackageName(event.target.value)}
+                placeholder="MyTagPackage"
+              />
+            </label>
+            <label className="settings-field">
+              <span>パッケージバージョン</span>
+              <input
+                type="number"
+                min={1}
+                value={packageVersion}
+                onChange={(event) => setPackageVersion(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
+              />
+            </label>
+            <div className="package-content-options" role="radiogroup" aria-label="書き出すデータ">
+              {(["Catalog", "TagSets", "Full"] as PackageContentType[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={packageContentType === value ? "is-active" : ""}
+                  onClick={() => setPackageContentType(value)}
+                >
+                  {packageContentLabel(value)}
+                </button>
+              ))}
+            </div>
+            <p className="package-filename">
+              {packageFileName(packageName, packageContentType, packageVersion)}
+            </p>
+            <div className="package-export-preview">
+              <strong>Export内容</strong>
+              <span>
+                タグカタログ: {packageExportPreview?.catalogPatch?.operations.length ?? 0}件 / タグセット:{" "}
+                {packageExportPreview?.tagsetPatch?.operations.length ?? 0}件
+              </span>
+              <small>
+                削除操作は共有差分に含めません。changes.csv、manifest.json、patch JSONをZIPへ保存します。
+              </small>
+            </div>
+          </div>
+        ) : (
+          <div className="package-panel">
+            <button className="primary-button" type="button" disabled={packageBusy} onClick={openPackageFile}>
+              <FileArchive />
+              ZIPを選択
+            </button>
+            {packagePreview && (
+              <div className="package-import-preview">
+                <strong>
+                  {packagePreview.pkg.manifest.package_name} v{packagePreview.pkg.manifest.package_version}
+                </strong>
+                <span>
+                  Catalog {packagePreview.pkg.catalogPatch?.operations.length ?? 0}件 / TagSets{" "}
+                  {packagePreview.pkg.tagsetPatch?.operations.length ?? 0}件
+                </span>
+                {packagePreview.conflicts.length > 0 && (
+                  <span>
+                    競合 {packagePreview.conflicts.length}件
+                    {packageConflictResolution === "skip" ? ` / スキップ予定 ${packagePreview.conflicts.length}件` : ""}
+                  </span>
+                )}
+                <div className="package-import-targets" aria-label="Import対象">
+                  {(["catalog", "tagsets"] as const).map((key) => {
+                    const label = key === "catalog" ? "タグカタログ" : "タグセット";
+                    const included = packagePreview.pkg.manifest.contains[key];
+                    const checked = packageImportSelection[key] && included;
+                    return (
+                      <label key={key} className={!included ? "is-disabled" : ""}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!included || packageBusy}
+                          onChange={(event) => {
+                            const next = { ...packageImportSelection, [key]: event.target.checked && included };
+                            setPackageImportSelection(next);
+                            setPackageConflictResolution("stop");
+                            setPackagePreview(buildImportPreview(packagePreview.pkg, next, "stop"));
+                          }}
+                        />
+                        <span>{label}</span>
+                        <small>{included ? "あり" : "なし"}</small>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="package-import-scope">
+                  タグカタログ: {packagePreview.pkg.manifest.contains.catalog && packageImportSelection.catalog ? "読み込む" : "読み込まない"} / タグセット:{" "}
+                  {packagePreview.pkg.manifest.contains.tagsets && packageImportSelection.tagsets ? "読み込む" : "読み込まない"}
+                </p>
+                {packagePreview.issues.map((issue) => (
+                  <p className="validation-error" key={issue}>
+                    <AlertTriangle />
+                    {issue}
+                  </p>
+                ))}
+                {packagePreview.conflicts.map((conflict) => (
+                  <p className="validation-error" key={conflict}>
+                    <AlertTriangle />
+                    {conflict}
+                  </p>
+                ))}
+                {packagePreview.conflicts.length > 0 && (
+                  <fieldset className="package-conflict-resolution">
+                    <legend>競合の扱い</legend>
+                    <label>
+                      <input
+                        type="radio"
+                        name="package-conflict-resolution"
+                        checked={packageConflictResolution === "stop"}
+                        onChange={() => changeConflictResolution("stop")}
+                      />
+                      <span>現在の設定を保持してImportを停止</span>
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="package-conflict-resolution"
+                        checked={packageConflictResolution === "import"}
+                        onChange={() => changeConflictResolution("import")}
+                      />
+                      <span>競合箇所はImport側を採用</span>
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="package-conflict-resolution"
+                        checked={packageConflictResolution === "skip"}
+                        onChange={() => changeConflictResolution("skip")}
+                      />
+                      <span>競合箇所は今回スキップ</span>
+                    </label>
+                    {packageConflictResolution === "import" && (
+                      <small>Import側を採用すると、表示された競合箇所は現在の内容を上書きします。</small>
+                    )}
+                    {packageConflictResolution === "skip" && (
+                      <small>スキップを選ぶと、表示された競合operationだけを除外して、競合していない差分をImportします。</small>
+                    )}
+                  </fieldset>
+                )}
+              </div>
+            )}
+            {!packagePreview && <p>ZIPを選ぶと、ここにImport前のpreviewが表示されます。</p>}
+            <section className="package-import-history" aria-label="Import履歴">
+              <strong>Import履歴</strong>
+              {importHistory.length ? (
+                <ul>
+                  {importHistory.slice(0, 8).map((item) => (
+                    <li key={item.key}>
+                      <span>
+                        {item.packageName} v{item.packageVersion}
+                      </span>
+                      <small>
+                        {formatImportDate(item.importedAt)} /{" "}
+                        {item.containsCatalog && item.containsTagSets
+                          ? "タグカタログ + タグセット"
+                          : item.containsCatalog
+                            ? "タグカタログ"
+                            : item.containsTagSets
+                              ? "タグセット"
+                              : "内容不明"}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <small>まだImport履歴はありません。</small>
+              )}
+            </section>
+          </div>
+        )}
+        <footer>
+          <button type="button" disabled={packageBusy} onClick={() => setPackageDialogMode(null)}>
+            {packageDialogMode === "import" ? "キャンセル" : "閉じる"}
+          </button>
+          {packageDialogMode === "export" ? (
+            <button className="primary-button" type="button" disabled={packageBusy} onClick={exportPackage}>
+              <Download />
+              {packageBusy ? "書き出し中..." : "ZIPを書き出す"}
+            </button>
+          ) : (
+            <div className="package-import-action">
+              {packageImportDisabledReason && <p>{packageImportDisabledReason}</p>}
+              <button
+                className="primary-button"
+                type="button"
+                disabled={Boolean(packageImportDisabledReason)}
+                title={packageImportDisabledReason || undefined}
+                onClick={applyPackageImport}
+              >
+                <FileArchive />
+                Importを適用
+              </button>
+            </div>
+          )}
+        </footer>
+      </section>
+    </div>
+  ) : null;
   const scrollLanes = (direction: -1 | 1) => {
     const scroller = laneScroller.current;
     if (!scroller) return;
@@ -671,10 +1559,6 @@ export function App() {
     setOverTreeCategoryId(
       String(event.over?.id ?? "").startsWith("tree-category:") ? (categoryId ?? null) : null,
     );
-    if (activeDrag?.type === "tag" && categoryId) {
-      const category = document.categories.find((item) => item.id === categoryId);
-      if (category && category.level !== "small") store.toggleExpanded(category.id, true);
-    }
     if (activeType === "category" && categoryId) {
       const activeCategory = document.categories.find((item) => item.id === activeId);
       if (activeCategory?.level === "medium" && target?.level === "major") {
@@ -755,9 +1639,9 @@ export function App() {
     setTrailVector((current) => ({ ...current, visible: false }));
     dragSounds.current.cancel();
   };
-  const updateFavorites = (nextFavorites: string[]) => {
-    setFavoriteTags(nextFavorites);
-    writeFavoriteSettings({ favorites: nextFavorites });
+  const updateTagSetFavorites = (nextFavorites: string[]) => {
+    setFavoriteTagSets(nextFavorites);
+    writeFavoriteSettings({ favorites: favoriteTags, favoriteTagSets: nextFavorites });
   };
   const toggleTagFavorite = (tag: TagOccurrence) => {
     const next = toggleFavorite(favoriteTags, tag.prompt);
@@ -767,6 +1651,16 @@ export function App() {
       message: next.includes(favoriteTagKey(tag.prompt))
         ? "お気に入りに追加しました"
         : "お気に入りから削除しました",
+      });
+  };
+  const toggleTagSetFavorite = (id: string, name: string) => {
+    const next = toggleFavorite(favoriteTagSets, id);
+    updateTagSetFavorites(next);
+    setToast({
+      message: next.includes(favoriteTagSetKey(id))
+        ? "タグセットをお気に入りに追加しました"
+        : "タグセットをお気に入りから削除しました",
+      detail: name,
     });
   };
   const editTag = (tag: TagOccurrence, prompt: string, translationJa: string) => {
@@ -803,6 +1697,213 @@ export function App() {
   const addCategory = (level: CategoryNode["level"], parentId: string, labelJa: string) =>
     store.createCategory(level, parentId, labelJa);
 
+  if (isTagSetMode) {
+    const counts = tagSetDocument ? tagSetCounts(tagSetDocument) : null;
+    return (
+      <div
+        ref={appShellRef}
+        className={`app-shell theme-${theme}`}
+        onContextMenuCapture={(event) => {
+          event.preventDefault();
+        }}
+      >
+        <header className="app-toolbar">
+          <div className="app-title">
+            <FileJson />
+            <strong>ComfyUI Prompt Workbench Tag Editor</strong>
+            <span className="current-file-path" title={tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}>
+              {tagSetDocument?.filePath ?? tagSetDocument?.fileName ?? "tag_sets.json"}
+            </span>
+            {dirty && (
+              <span className="unsaved">
+                <AlertTriangle />
+                未保存の変更あり
+              </span>
+            )}
+            {counts && (
+              <span className="tag-set-counts">
+                {counts.sets.toLocaleString()} セット / {counts.smalls.toLocaleString()} 小分類
+              </span>
+            )}
+          </div>
+          <div className="editor-mode-tabs" role="tablist" aria-label="編集画面">
+            <button type="button" role="tab" aria-selected="false" onClick={() => setEditorMode("tags")}>
+              タグ編集
+            </button>
+            <button className="is-active" type="button" role="tab" aria-selected="true">
+              タグセット編集
+            </button>
+          </div>
+          <div className="toolbar-actions">
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={(event) => void loadSelectedFile(event.target.files?.[0])}
+            />
+            <input
+              ref={packageInput}
+              type="file"
+              accept=".zip,application/zip"
+              hidden
+              onChange={(event) => void loadPackageFile(event.target.files?.[0])}
+            />
+            <button type="button" onClick={() => void openCatalogFile()}>
+              <FolderOpen />
+              設定ファイルを開く
+            </button>
+            <button type="button" onClick={undoTagSet} disabled={!tagSetHistory.length} aria-label="元に戻す">
+              <Undo2 />
+              元に戻す
+            </button>
+            <button type="button" onClick={redoTagSet} disabled={!tagSetFuture.length} aria-label="やり直す">
+              <Redo2 />
+              やり直す
+            </button>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label="テーマを切り替え"
+            >
+              {theme === "dark" ? <Sun /> : <Moon />}
+            </button>
+            <div className="settings-control">
+              <button
+                className={`icon-button ${settingsOpen ? "is-active" : ""}`}
+                type="button"
+                aria-label="設定"
+                aria-expanded={settingsOpen}
+                aria-controls="editor-settings"
+                onClick={() => setSettingsOpen((current) => !current)}
+              >
+                <Settings />
+              </button>
+              {settingsOpen && (
+                <div id="editor-settings" className="settings-popover" role="dialog" aria-label="設定">
+                  <div className="settings-row">
+                    <div>
+                      <strong>共有パッケージ</strong>
+                      <span>差分ZIPをImport / Exportします</span>
+                    </div>
+                    <div className="settings-actions">
+                      <button type="button" onClick={() => setPackageDialogMode("import")}>
+                        <FileArchive />
+                        Import
+                      </button>
+                      <button type="button" onClick={() => setPackageDialogMode("export")}>
+                        <Download />
+                        Export
+                      </button>
+                    </div>
+                  </div>
+                  <label className="settings-field">
+                    <span>Prompt Workbench data フォルダ</span>
+                    <input
+                      value={promptWorkbenchDataDir}
+                      spellCheck={false}
+                      placeholder="未指定の場合は自動検出"
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setPromptWorkbenchDataDir(value);
+                        writePromptWorkbenchDataDir(value);
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+            <button
+              className="save-button"
+              type="button"
+              disabled={!tagSetDocument || !canOverwriteCurrentFile || saving}
+              title={
+                currentTagSetFileHandle
+                  ? `${currentTagSetFileHandle.name} を上書き保存`
+                  : canOverwriteCurrentFile
+                    ? `${tagSetDocument?.fileName ?? "tag_sets.json"} の保存先を確認して上書き保存`
+                    : "上書きできるファイルがありません。別名で保存してください"
+              }
+              onClick={() => setSaveMode("overwrite")}
+            >
+              <Save />
+              上書き保存
+            </button>
+            {needsLocalhostForOverwrite && (
+              <a className="localhost-save-link" href={localhostUrl} title="安全なローカルURLで開き直します">
+                <AlertTriangle />
+                localhostで開いて上書き
+              </a>
+            )}
+            <button
+              className="primary-button save-button"
+              type="button"
+              disabled={!tagSetDocument || saving}
+              onClick={() => setSaveMode("saveAs")}
+            >
+              <Download />
+              別名で保存
+            </button>
+          </div>
+        </header>
+        {tagSetDocument ? (
+          <TagSetEditor
+            document={tagSetDocument}
+            onChange={editTagSetDocument}
+            dragSounds={dragSounds.current}
+            soundEnabled={soundEnabled}
+            promptWorkbenchDataDir={promptWorkbenchDataDir}
+            favoriteTagSetKeys={favoriteTagSetKeys}
+            showFavoritesOnly={store.showFavoritesOnly}
+            onToggleFavorite={toggleTagSetFavorite}
+          />
+        ) : (
+          <main className="tag-set-editor tag-set-empty-state">
+            <div className="tag-set-empty">
+              <strong>タグセット設定ファイルを開いてください</strong>
+              <p>上部の「設定ファイルを開く」から tag_sets.json を読み込むと編集できます。</p>
+            </div>
+          </main>
+        )}
+        {store.error && (
+          <div className="error-toast" role="alert">
+            <AlertTriangle />
+            {store.error}
+            <button type="button" onClick={() => store.setError(null)} aria-label="閉じる">
+              <X />
+            </button>
+          </div>
+        )}
+        {toast && (
+          <div className="success-toast" role="status">
+            <CheckCircle2 />
+            <span>
+              <strong>{toast.message}</strong>
+              {toast.detail && <small>{toast.detail}</small>}
+            </span>
+          </div>
+        )}
+        <PreviewDialog
+          open={saveMode !== null}
+          mode={saveMode ?? "saveAs"}
+          fileName={saveMode === "overwrite" ? (currentTagSetFileHandle?.name ?? tagSetDocument?.fileName ?? "tag_sets.json") : outputName}
+          targetPath={
+            saveMode === "overwrite"
+              ? (catalogHandlePath(currentTagSetFileHandle) ?? tagSetDocument?.filePath ?? tagSetDocument?.fileName)
+              : undefined
+          }
+          summary={summary}
+          issues={issues}
+          saving={saving}
+          onClose={() => setSaveMode(null)}
+          onSave={saveCatalog}
+        />
+        {packageDialog}
+      </div>
+    );
+  }
+
   const selectedTags = document.tags.filter((tag) => selected.has(tag.uid));
   return (
     <div
@@ -826,6 +1927,14 @@ export function App() {
             </span>
           )}
         </div>
+        <div className="editor-mode-tabs" role="tablist" aria-label="編集画面">
+          <button className="is-active" type="button" role="tab" aria-selected="true">
+            タグ編集
+          </button>
+          <button type="button" role="tab" aria-selected="false" onClick={() => setEditorMode("tagSets")}>
+            タグセット編集
+          </button>
+        </div>
         <div className="toolbar-actions">
           <input
             ref={fileInput}
@@ -834,9 +1943,16 @@ export function App() {
             hidden
             onChange={(event) => void loadSelectedFile(event.target.files?.[0])}
           />
+          <input
+            ref={packageInput}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={(event) => void loadPackageFile(event.target.files?.[0])}
+          />
           <button type="button" onClick={() => void openCatalogFile()}>
             <FolderOpen />
-            タグ設定ファイルを開く
+            設定ファイルを開く
           </button>
           <button type="button" onClick={store.undo} disabled={!store.history.length} aria-label="元に戻す">
             <Undo2 />
@@ -881,25 +1997,56 @@ export function App() {
             </button>
             {settingsOpen && (
               <div id="editor-settings" className="settings-popover" role="dialog" aria-label="設定">
-                <div>
-                  <strong>操作音</strong>
-                  <span>ドラッグの開始・移動・ドロップ</span>
+                <div className="settings-row">
+                  <div>
+                    <strong>操作音</strong>
+                    <span>ドラッグの開始・移動・ドロップ</span>
+                  </div>
+                  <button
+                    className="sound-toggle"
+                    type="button"
+                    role="switch"
+                    aria-label="操作音"
+                    aria-checked={soundEnabled}
+                    onClick={() => {
+                      const next = !soundEnabled;
+                      setSoundEnabled(next);
+                      writeDragSoundPreference(next);
+                    }}
+                  >
+                    {soundEnabled ? <Volume2 /> : <VolumeX />}
+                    {soundEnabled ? "オン" : "オフ"}
+                  </button>
                 </div>
-                <button
-                  className="sound-toggle"
-                  type="button"
-                  role="switch"
-                  aria-label="操作音"
-                  aria-checked={soundEnabled}
-                  onClick={() => {
-                    const next = !soundEnabled;
-                    setSoundEnabled(next);
-                    writeDragSoundPreference(next);
-                  }}
-                >
-                  {soundEnabled ? <Volume2 /> : <VolumeX />}
-                  {soundEnabled ? "オン" : "オフ"}
-                </button>
+                <label className="settings-field">
+                  <span>Prompt Workbench data フォルダ</span>
+                  <input
+                    value={promptWorkbenchDataDir}
+                    spellCheck={false}
+                    placeholder="未指定の場合は自動検出"
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setPromptWorkbenchDataDir(value);
+                      writePromptWorkbenchDataDir(value);
+                    }}
+                  />
+                </label>
+                <div className="settings-row">
+                  <div>
+                    <strong>共有パッケージ</strong>
+                    <span>差分ZIPをImport / Exportします</span>
+                  </div>
+                  <div className="settings-actions">
+                    <button type="button" onClick={() => setPackageDialogMode("import")}>
+                      <FileArchive />
+                      Import
+                    </button>
+                    <button type="button" onClick={() => setPackageDialogMode("export")}>
+                      <Download />
+                      Export
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -979,14 +2126,6 @@ export function App() {
                 </select>
                 <ChevronDown />
               </label>
-              <label>
-                表示：
-                <select>
-                  <option>すべてのタグ</option>
-                  <option>選択中のみ</option>
-                </select>
-                <ChevronDown />
-              </label>
               <button
                 className={store.showDuplicatesOnly ? "is-active" : ""}
                 type="button"
@@ -1045,7 +2184,7 @@ export function App() {
               <span className="workspace-status">
                 {document.tags.length.toLocaleString()} タグ / {document.categories.length} カテゴリ
               </span>
-              {!normalizedGlobalQuery && smallCategories.length > 4 && (
+              {!hasGlobalQuery && smallCategories.length > 4 && (
                 <div className="lane-navigation" aria-label="小分類レーンの横移動">
                   <span>小分類 {smallCategories.length}件</span>
                   <button type="button" onClick={() => scrollLanes(-1)} aria-label="小分類を左へスクロール">
@@ -1057,7 +2196,7 @@ export function App() {
                 </div>
               )}
             </div>
-            {normalizedGlobalQuery ? (
+            {hasGlobalQuery ? (
               <section className="global-search-results" aria-label="全タグの検索結果">
                 <header>
                   <div>
@@ -1091,7 +2230,12 @@ export function App() {
                           }}
                         >
                           <span className="global-result-prompt">
-                            {favorite && <Star className="favorite-star" aria-label="お気に入り" fill="currentColor" />}
+                            <Star
+                              className={`favorite-star ${favorite ? "is-favorite" : ""}`}
+                              aria-label={favorite ? "お気に入り" : undefined}
+                              aria-hidden={!favorite}
+                              fill={favorite ? "currentColor" : "none"}
+                            />
                             {tag.prompt}
                           </span>
                           <span className="global-result-translation">{tag.translationJa || "—"}</span>
@@ -1269,12 +2413,18 @@ export function App() {
         fileName={
           saveMode === "overwrite" ? (currentCatalogFileHandle?.name ?? document.fileName) : outputName
         }
+        targetPath={
+          saveMode === "overwrite"
+            ? (catalogHandlePath(currentCatalogFileHandle) ?? document.filePath ?? document.fileName)
+            : undefined
+        }
         summary={summary}
         issues={issues}
         saving={saving}
         onClose={() => setSaveMode(null)}
         onSave={saveCatalog}
       />
+      {packageDialog}
     </div>
   );
 }

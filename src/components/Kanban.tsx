@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { favoriteTagKey } from "../domain/favorites";
+import { itemOrigin } from "../domain/lineage";
 import type { CategoryNode, TagOccurrence } from "../domain/types";
 
 interface TagRowProps {
@@ -32,6 +33,13 @@ interface TagRowProps {
   onDelete: (tag: TagOccurrence) => void;
   onMoveRequest: (tag: TagOccurrence, point: { x: number; y: number }) => void;
 }
+
+type SelectionSnapshot = {
+  target: "prompt" | "translation";
+  start: number;
+  end: number;
+  direction: "forward" | "backward" | "none";
+};
 
 function TagRow({
   tag,
@@ -51,8 +59,11 @@ function TagRow({
   const [draftPrompt, setDraftPrompt] = useState(tag.prompt);
   const [draftTranslation, setDraftTranslation] = useState(tag.translationJa);
   const [promptInvalid, setPromptInvalid] = useState(false);
+  const origin = itemOrigin(tag.raw);
+  const originLabel = origin === "local" ? "自分で追加" : origin === "imported" ? "Import" : "Default";
   const promptInputRef = useRef<HTMLInputElement>(null);
   const translationInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingSelectionRef = useRef<SelectionSnapshot | null>(null);
   const draggable = useDraggable({
     id: `tag:${tag.uid}`,
     data: { type: "tag", tagId: tag.uid, categoryId: tag.categoryId },
@@ -68,6 +79,20 @@ function TagRow({
   useEffect(() => {
     if (editing) promptInputRef.current?.focus();
   }, [editing]);
+  useLayoutEffect(() => {
+    const selection = pendingSelectionRef.current;
+    if (!editing || !selection) return;
+    const target =
+      selection.target === "prompt" ? promptInputRef.current : translationInputRef.current;
+    if (!target || document.activeElement !== target) return;
+    const max = target.value.length;
+    target.setSelectionRange(
+      Math.min(selection.start, max),
+      Math.min(selection.end, max),
+      selection.direction,
+    );
+    pendingSelectionRef.current = null;
+  }, [draftPrompt, draftTranslation, editing]);
   const rowRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const row = rowRef.current;
@@ -118,6 +143,17 @@ function TagRow({
     event.stopPropagation();
     onMoveRequest(tag, { x: event.clientX, y: event.clientY });
   };
+  const rememberSelection = (
+    target: "prompt" | "translation",
+    control: HTMLInputElement | HTMLTextAreaElement,
+  ) => {
+    pendingSelectionRef.current = {
+      target,
+      start: control.selectionStart ?? control.value.length,
+      end: control.selectionEnd ?? control.value.length,
+      direction: control.selectionDirection ?? "none",
+    };
+  };
   return (
     <div
       ref={(node) => {
@@ -128,6 +164,7 @@ function TagRow({
       style={{ transform: CSS.Translate.toString(draggable.transform) }}
       role="option"
       aria-selected={selected}
+      title={`由来: ${originLabel}`}
       tabIndex={0}
       onPointerDownCapture={(event) => {
         if (event.button === 2) requestMoveMenu(event);
@@ -218,6 +255,7 @@ function TagRow({
             aria-label={`${tag.prompt}のタグ名`}
             aria-invalid={promptInvalid}
             onChange={(event) => {
+              rememberSelection("prompt", event.target);
               setDraftPrompt(event.target.value);
               if (event.target.value.trim()) setPromptInvalid(false);
             }}
@@ -237,7 +275,10 @@ function TagRow({
             value={draftTranslation}
             rows={1}
             aria-label={`${tag.prompt}の日本語訳`}
-            onChange={(event) => setDraftTranslation(event.target.value)}
+            onChange={(event) => {
+              rememberSelection("translation", event.target);
+              setDraftTranslation(event.target.value);
+            }}
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
               event.stopPropagation();
@@ -293,7 +334,12 @@ function TagRow({
               beginEditing();
             }}
           >
-            {favorite && <Star className="favorite-star" aria-label="お気に入り" fill="currentColor" />}
+            <Star
+              className={`favorite-star ${favorite ? "is-favorite" : ""}`}
+              aria-label={favorite ? "お気に入り" : undefined}
+              aria-hidden={!favorite}
+              fill={favorite ? "currentColor" : "none"}
+            />
             {tag.prompt}
           </span>
           <span

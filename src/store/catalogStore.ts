@@ -31,6 +31,7 @@ interface StoreState {
   showFavoritesOnly: boolean;
   error: string | null;
   load: (document: CatalogDocument) => void;
+  replaceDocument: (document: CatalogDocument) => void;
   markSaved: (fileName: string, filePath?: string) => void;
   setError: (error: string | null) => void;
   setSelectedMedium: (id: string) => void;
@@ -116,6 +117,21 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
         .map((item) => item.id),
       error: null,
     }),
+  replaceDocument: (document) =>
+    set((state) => ({
+      document,
+      history: state.document ? [...state.history, state.document].slice(-100) : state.history,
+      future: [],
+      selectedTagIds: [],
+      touchedTagIds: [],
+      touchedCategoryIds: [],
+      anchorTagId: null,
+      selectedMediumId: firstMedium(document),
+      expandedCategoryIds: document.categories
+        .filter((item) => item.level !== "small")
+        .map((item) => item.id),
+      error: null,
+    })),
   markSaved: (fileName, filePath) =>
     set((state) => {
       if (!state.document) return {};

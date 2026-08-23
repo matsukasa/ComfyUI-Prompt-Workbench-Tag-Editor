@@ -1,11 +1,16 @@
 export interface FavoriteSettings {
   favorites: string[];
+  favoriteTagSets: string[];
 }
 
 export const FAVORITES_STORAGE_KEY = "prompt-workbench:favorites";
 
 export function favoriteTagKey(value: string): string {
   return String(value || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+}
+
+export function favoriteTagSetKey(value: string): string {
+  return favoriteTagKey(value);
 }
 
 export function sanitizeFavorites(values: unknown): string[] {
@@ -20,21 +25,25 @@ export function sanitizeFavorites(values: unknown): string[] {
 }
 
 export function parseFavoriteSettings(value: unknown): FavoriteSettings {
-  if (Array.isArray(value)) return { favorites: sanitizeFavorites(value) };
+  if (Array.isArray(value)) return { favorites: sanitizeFavorites(value), favoriteTagSets: [] };
   if (value && typeof value === "object" && "favorites" in value) {
-    return { favorites: sanitizeFavorites((value as { favorites?: unknown }).favorites) };
+    const settings = value as { favorites?: unknown; favoriteTagSets?: unknown };
+    return {
+      favorites: sanitizeFavorites(settings.favorites),
+      favoriteTagSets: sanitizeFavorites(settings.favoriteTagSets).slice(0, 2000),
+    };
   }
-  return { favorites: [] };
+  return { favorites: [], favoriteTagSets: [] };
 }
 
 export function readFavoriteSettings(): FavoriteSettings {
-  if (typeof window === "undefined") return { favorites: [] };
+  if (typeof window === "undefined") return { favorites: [], favoriteTagSets: [] };
   try {
     const raw = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
-    if (!raw) return { favorites: [] };
+    if (!raw) return { favorites: [], favoriteTagSets: [] };
     return parseFavoriteSettings(JSON.parse(raw));
   } catch {
-    return { favorites: [] };
+    return { favorites: [], favoriteTagSets: [] };
   }
 }
 
@@ -43,7 +52,10 @@ export function writeFavoriteSettings(settings: FavoriteSettings): void {
   try {
     window.localStorage.setItem(
       FAVORITES_STORAGE_KEY,
-      JSON.stringify({ favorites: sanitizeFavorites(settings.favorites) }),
+      JSON.stringify({
+        favorites: sanitizeFavorites(settings.favorites),
+        favoriteTagSets: sanitizeFavorites(settings.favoriteTagSets).slice(0, 2000),
+      }),
     );
   } catch {
     // Favorites are user convenience data; catalog editing must continue if storage is unavailable.
@@ -59,3 +71,7 @@ export function toggleFavorite(values: Iterable<string>, value: string): string[
   return [...next].sort();
 }
 
+export function syncFavoritesToCatalog(values: Iterable<string>, prompts: Iterable<string>): string[] {
+  const available = new Set(sanitizeFavorites([...prompts]));
+  return sanitizeFavorites([...values]).filter((key) => available.has(key));
+}

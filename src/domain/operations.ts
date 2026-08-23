@@ -1,4 +1,5 @@
 import type { CatalogDocument, CategoryLevel, CategoryNode } from "./types";
+import { getWorkbenchMeta, itemOrigin, markLocal, writeWorkbenchMeta } from "./lineage";
 
 function copy(document: CatalogDocument): CatalogDocument {
   return structuredClone(document);
@@ -27,6 +28,10 @@ function normalizeTagOrders(document: CatalogDocument): void {
     tag.order = order;
     indexes.set(tag.categoryId, order + 1);
   }
+}
+
+function tagStableId(tag: { sourceId: unknown; uid: string }): string {
+  return String(tag.sourceId ?? tag.uid);
 }
 
 export function moveTags(
@@ -181,7 +186,7 @@ export function addTags(document: CatalogDocument, categoryId: string, values: s
       translationJa: "",
       aliases: [],
       order: nextOrder++,
-      raw: {},
+      raw: markLocal({}),
     });
   }
   normalizeTagOrders(result);
@@ -191,6 +196,13 @@ export function addTags(document: CatalogDocument, categoryId: string, values: s
 export function deleteTags(document: CatalogDocument, uids: string[]): CatalogDocument {
   const result = copy(document);
   const selected = new Set(uids);
+  const meta = getWorkbenchMeta(result.original);
+  for (const tag of result.tags) {
+    if (selected.has(tag.uid) && itemOrigin(tag.raw) === "default") {
+      meta.deletedDefaultCatalogIds.push(tagStableId(tag));
+    }
+  }
+  writeWorkbenchMeta(result.original, meta);
   result.tags = result.tags.filter((tag) => !selected.has(tag.uid));
   normalizeTagOrders(result);
   return result;
@@ -219,7 +231,7 @@ export function addCategory(
     labelEn: "",
     descriptionJa: "",
     order: result.categories.length,
-    raw: {},
+    raw: markLocal({}),
   });
   return result;
 }
@@ -250,14 +262,24 @@ export function deleteCategory(
   const affected = result.tags.filter((tag) => removed.has(tag.categoryId));
   if (affected.length && !destinationId && !deleteTagsToo)
     throw new Error("タグの移動先を指定してください。");
+  const meta = getWorkbenchMeta(result.original);
+  for (const category of result.categories) {
+    if (removed.has(category.id) && itemOrigin(category.raw) === "default") {
+      meta.deletedDefaultCatalogCategoryIds.push(category.id);
+    }
+  }
   if (destinationId) {
     const destination = result.categories.find((item) => item.id === destinationId && item.level === "small");
     if (!destination || removed.has(destination.id))
       throw new Error("有効な移動先小分類を指定してください。");
     affected.forEach((tag) => (tag.categoryId = destination.id));
   } else if (deleteTagsToo) {
+    for (const tag of affected) {
+      if (itemOrigin(tag.raw) === "default") meta.deletedDefaultCatalogIds.push(tagStableId(tag));
+    }
     result.tags = result.tags.filter((tag) => !removed.has(tag.categoryId));
   }
+  writeWorkbenchMeta(result.original, meta);
   result.categories = result.categories.filter((category) => !removed.has(category.id));
   normalizeCategoryOrders(result.categories);
   normalizeTagOrders(result);

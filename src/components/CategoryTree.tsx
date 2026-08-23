@@ -13,10 +13,18 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { itemOrigin } from "../domain/lineage";
 import { sortedChildren } from "../domain/operations";
 import type { CategoryNode, TagOccurrence } from "../domain/types";
 
 const colors = ["violet", "coral", "emerald", "sky", "magenta", "cyan", "amber", "indigo"];
+
+function originLabel(category: CategoryNode): string {
+  const origin = itemOrigin(category.raw);
+  if (origin === "local") return "由来: 自分で追加";
+  if (origin === "imported") return "由来: Import";
+  return "由来: Default";
+}
 
 interface TreeProps {
   categories: CategoryNode[];
@@ -158,6 +166,7 @@ function CategoryRow({
         if (!editing) onSelect();
       }}
       data-category-id={category.id}
+      title={originLabel(category)}
     >
       <button
         className="tree-toggle"

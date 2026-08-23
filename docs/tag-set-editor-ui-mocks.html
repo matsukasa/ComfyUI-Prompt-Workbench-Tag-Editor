@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tag Set Editor UI Mocks</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif;
+        --bg: oklch(0.145 0.014 248);
+        --surface-0: oklch(0.17 0.014 248);
+        --surface-1: oklch(0.195 0.015 248);
+        --surface-2: oklch(0.225 0.018 248);
+        --line: oklch(0.34 0.016 248);
+        --line-soft: oklch(0.28 0.014 248);
+        --ink: oklch(0.94 0.008 248);
+        --muted: oklch(0.72 0.018 248);
+        --accent: oklch(0.72 0.18 52);
+        --cyan: oklch(0.73 0.16 205);
+        --violet: oklch(0.69 0.19 305);
+        --coral: oklch(0.69 0.19 35);
+        --emerald: oklch(0.72 0.15 155);
+        --amber: oklch(0.78 0.16 82);
+        --danger: oklch(0.67 0.2 28);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      .page {
+        display: grid;
+        gap: 22px;
+        padding: 18px;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 48px;
+        padding: 0 6px;
+      }
+
+      .page-header h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .page-header p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .mock {
+        display: grid;
+        grid-template-rows: auto minmax(0, 640px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-0);
+      }
+
+      .mock-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 54px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mock-title strong {
+        font-size: 15px;
+      }
+
+      .mock-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .mock-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface-1);
+        color: var(--ink);
+      }
+
+      .button.primary {
+        border-color: color-mix(in oklch, var(--accent) 65%, var(--line));
+        background: color-mix(in oklch, var(--accent) 18%, var(--surface-1));
+      }
+
+      .layout-tree-lanes {
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .layout-master-detail {
+        display: grid;
+        grid-template-columns: 290px 340px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .layout-tabs-detail {
+        display: grid;
+        grid-template-columns: 310px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .sidebar,
+      .set-list,
+      .detail {
+        min-height: 0;
+        overflow: auto;
+        border-right: 1px solid var(--line);
+      }
+
+      .detail {
+        border-right: 0;
+        background: var(--surface-0);
+      }
+
+      .sidebar-head,
+      .panel-head {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in oklch, var(--surface-0) 94%, transparent);
+      }
+
+      .search {
+        display: flex;
+        align-items: center;
+        height: 34px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+        background: var(--surface-1);
+      }
+
+      .tree {
+        display: grid;
+        gap: 2px;
+        padding: 8px;
+      }
+
+      .tree-row {
+        display: grid;
+        grid-template-columns: 24px 26px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-height: 36px;
+        padding: 0 8px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        color: var(--muted);
+      }
+
+      .tree-row.selected {
+        border-color: color-mix(in oklch, var(--accent) 58%, var(--line));
+        background: color-mix(in oklch, var(--accent) 13%, var(--surface-1));
+        color: var(--ink);
+      }
+
+      .tree-row .level {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: 12px;
+      }
+
+      .tree-row .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tree-row small,
+      .count {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .lane-area {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .lane-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 48px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .lanes {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(310px, 1fr);
+        gap: 12px;
+        min-height: 0;
+        overflow: auto;
+        padding: 12px;
+      }
+
+      .lane {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-height: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-1);
+      }
+
+      .lane header,
+      .set-row,
+      .compact-card header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .lane header {
+        padding: 11px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .lane header strong {
+        font-size: 14px;
+      }
+
+      .cards {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        min-height: 0;
+        overflow: auto;
+        padding: 10px;
+      }
+
+      .set-card,
+      .compact-card,
+      .edit-card {
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        background: var(--surface-0);
+      }
+
+      .set-card {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .set-card.selected {
+        border-color: color-mix(in oklch, var(--accent) 64%, var(--line));
+        box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 18%, transparent);
+      }
+
+      .set-card strong,
+      .set-row strong {
+        font-size: 13px;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 23px;
+        padding: 0 7px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: color-mix(in oklch, var(--violet) 72%, var(--ink));
+        background: color-mix(in oklch, var(--violet) 9%, var(--surface-0));
+        font-size: 12px;
+      }
+
+      .set-list {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        background: var(--surface-1);
+      }
+
+      .rows {
+        display: grid;
+        align-content: start;
+        gap: 6px;
+        overflow: auto;
+        padding: 10px;
+      }
+
+      .set-row {
+        min-height: 48px;
+        padding: 8px 10px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: var(--surface-0);
+      }
+
+      .set-row.selected {
+        border-color: color-mix(in oklch, var(--accent) 65%, var(--line));
+        background: color-mix(in oklch, var(--accent) 12%, var(--surface-0));
+      }
+
+      .edit-form {
+        display: grid;
+        gap: 12px;
+        max-width: 760px;
+        padding: 16px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .field input,
+      .field textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface-1);
+        color: var(--ink);
+      }
+
+      .field input {
+        height: 36px;
+        padding: 0 10px;
+      }
+
+      .field textarea {
+        min-height: 130px;
+        padding: 10px;
+        resize: vertical;
+        line-height: 1.55;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 6px;
+        overflow: auto;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tab {
+        min-height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface-1);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .tab.selected {
+        border-color: color-mix(in oklch, var(--accent) 65%, var(--line));
+        background: color-mix(in oklch, var(--accent) 15%, var(--surface-1));
+        color: var(--ink);
+      }
+
+      .compact-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 10px;
+        min-height: 0;
+        overflow: auto;
+        padding: 12px;
+      }
+
+      .compact-card {
+        display: grid;
+        gap: 10px;
+        padding: 11px;
+      }
+
+      .inline-edit {
+        display: grid;
+        gap: 7px;
+        padding-top: 8px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .inline-edit input,
+      .inline-edit textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface-1);
+        color: var(--ink);
+      }
+
+      .inline-edit input {
+        height: 32px;
+        padding: 0 9px;
+      }
+
+      .inline-edit textarea {
+        min-height: 86px;
+        padding: 9px;
+      }
+
+      @media (max-width: 900px) {
+        .mock {
+          grid-template-rows: auto auto;
+        }
+
+        .layout-tree-lanes,
+        .layout-master-detail,
+        .layout-tabs-detail {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar,
+        .set-list {
+          max-height: 270px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>タグセット編集 UI モック</h1>
+          <p>タグエディター本体のツリー、レーン、インライン編集感に寄せた3案です。</p>
+        </div>
+        <span class="button">tag_sets.json</span>
+      </header>
+
+      <section class="mock" aria-label="案1">
+        <div class="mock-title">
+          <div>
+            <strong>案1: ツリー + 小分類レーン</strong>
+            <span>現在のタグエディターに最も近い。左で分類を選び、右で小分類ごとにセットを編集。</span>
+          </div>
+          <div class="mock-actions">
+            <button class="button">セット追加</button>
+            <button class="button primary">保存</button>
+          </div>
+        </div>
+        <div class="layout-tree-lanes">
+          <aside class="sidebar">
+            <div class="sidebar-head">
+              <div class="search">分類を検索</div>
+            </div>
+            <div class="tree">
+              <div class="tree-row"><span>▾</span><span class="level">大</span><span class="label">服装</span><small>81</small></div>
+              <div class="tree-row selected" style="padding-left: 28px"><span>▾</span><span class="level">中</span><span class="label">かわいらしい服</span><small>27</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">リボンワンピース</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">フリルスカート</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">猫耳コーデ</span><small>3</small></div>
+              <div class="tree-row"><span>▸</span><span class="level">大</span><span class="label">背景のイメージ</span><small>27</small></div>
+              <div class="tree-row"><span>▸</span><span class="level">大</span><span class="label">髪型</span><small>27</small></div>
+            </div>
+          </aside>
+          <section class="lane-area">
+            <div class="lane-toolbar">
+              <strong>かわいらしい服</strong>
+              <span class="count">3 小分類 / 9 セット</span>
+            </div>
+            <div class="lanes">
+              <article class="lane">
+                <header><strong>リボンワンピース</strong><button class="button">追加</button></header>
+                <div class="cards">
+                  <div class="set-card selected">
+                    <strong>大きなリボンのワンピース</strong>
+                    <div class="tags"><span class="tag">ribbon dress</span><span class="tag">large bow</span><span class="tag">pastel</span></div>
+                  </div>
+                  <div class="set-card">
+                    <strong>ふんわり袖のワンピース</strong>
+                    <div class="tags"><span class="tag">puffy sleeves</span><span class="tag">soft dress</span><span class="tag">lace trim</span></div>
+                  </div>
+                </div>
+              </article>
+              <article class="lane">
+                <header><strong>フリルスカート</strong><button class="button">追加</button></header>
+                <div class="cards">
+                  <div class="set-card">
+                    <strong>フリルミニスカート</strong>
+                    <div class="tags"><span class="tag">frilled skirt</span><span class="tag">mini skirt</span><span class="tag">cute outfit</span></div>
+                  </div>
+                  <div class="set-card">
+                    <strong>甘めブラウスセット</strong>
+                    <div class="tags"><span class="tag">frilled blouse</span><span class="tag">pleated skirt</span></div>
+                  </div>
+                </div>
+              </article>
+              <article class="lane">
+                <header><strong>猫耳コーデ</strong><button class="button">追加</button></header>
+                <div class="cards">
+                  <div class="set-card">
+                    <strong>猫耳パーカー</strong>
+                    <div class="tags"><span class="tag">cat ears hoodie</span><span class="tag">paw gloves</span><span class="tag">tail accessory</span></div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="mock" aria-label="案2">
+        <div class="mock-title">
+          <div>
+            <strong>案2: 分類ツリー + セット一覧 + 詳細編集</strong>
+            <span>大量セット向け。選択中のセットだけを右で大きく編集できる。</span>
+          </div>
+          <div class="mock-actions">
+            <button class="button">複製</button>
+            <button class="button primary">保存</button>
+          </div>
+        </div>
+        <div class="layout-master-detail">
+          <aside class="sidebar">
+            <div class="sidebar-head"><div class="search">分類を検索</div></div>
+            <div class="tree">
+              <div class="tree-row"><span>▾</span><span class="level">大</span><span class="label">服装</span><small>81</small></div>
+              <div class="tree-row selected" style="padding-left: 28px"><span>▾</span><span class="level">中</span><span class="label">ゴシック系</span><small>27</small></div>
+              <div class="tree-row selected" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">黒レースドレス</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">クラシカルロリータ</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">ゴシックケープ</span><small>3</small></div>
+            </div>
+          </aside>
+          <section class="set-list">
+            <div class="panel-head">
+              <strong>黒レースドレス</strong>
+              <div class="search">セットを検索</div>
+            </div>
+            <div class="rows">
+              <div class="set-row selected"><strong>黒レースのゴシックドレス</strong><span class="count">5 tags</span></div>
+              <div class="set-row"><strong>赤い差し色のドレス</strong><span class="count">6 tags</span></div>
+              <div class="set-row"><strong>十字架アクセサリー</strong><span class="count">4 tags</span></div>
+              <button class="button">セット追加</button>
+            </div>
+          </section>
+          <section class="detail">
+            <div class="panel-head">
+              <strong>セット詳細</strong>
+              <span class="count">黒レースドレス > 黒レースのゴシックドレス</span>
+            </div>
+            <div class="edit-form">
+              <div class="field">
+                <label>表示名</label>
+                <input value="黒レースのゴシックドレス" />
+              </div>
+              <div class="field">
+                <label>英語名</label>
+                <input value="Black lace gothic dress" />
+              </div>
+              <div class="field">
+                <label>タグ</label>
+                <textarea>black lace dress, gothic fashion, lace trim, corset, elegant dark outfit</textarea>
+              </div>
+              <div class="tags">
+                <span class="tag">black lace dress</span><span class="tag">gothic fashion</span><span class="tag">corset</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="mock" aria-label="案3">
+        <div class="mock-title">
+          <div>
+            <strong>案3: ツリー + 小分類タブ + カード内インライン編集</strong>
+            <span>1画面の情報量を絞り、選んだ中分類の小分類だけをタブで切り替える。</span>
+          </div>
+          <div class="mock-actions">
+            <button class="button">カード追加</button>
+            <button class="button primary">保存</button>
+          </div>
+        </div>
+        <div class="layout-tabs-detail">
+          <aside class="sidebar">
+            <div class="sidebar-head"><div class="search">分類を検索</div></div>
+            <div class="tree">
+              <div class="tree-row"><span>▾</span><span class="level">大</span><span class="label">服装</span><small>81</small></div>
+              <div class="tree-row selected" style="padding-left: 28px"><span>▾</span><span class="level">中</span><span class="label">猫耳関係</span><small>27</small></div>
+              <div class="tree-row selected" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">猫耳パーカー</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">猫耳アクセサリー</span><small>3</small></div>
+              <div class="tree-row" style="padding-left: 48px"><span></span><span class="level">小</span><span class="label">しっぽ付き衣装</span><small>3</small></div>
+            </div>
+          </aside>
+          <section class="lane-area">
+            <div class="tabs">
+              <button class="tab selected">猫耳パーカー</button>
+              <button class="tab">猫耳アクセサリー</button>
+              <button class="tab">しっぽ付き衣装</button>
+            </div>
+            <div class="compact-grid">
+              <article class="compact-card">
+                <header><strong>白い猫耳パーカー</strong><span class="count">編集中</span></header>
+                <div class="tags"><span class="tag">cat ears hoodie</span><span class="tag">white hoodie</span><span class="tag">cute casual</span></div>
+                <div class="inline-edit">
+                  <input value="白い猫耳パーカー" />
+                  <textarea>cat ears hoodie, white hoodie, cute casual outfit, oversized sleeves</textarea>
+                </div>
+              </article>
+              <article class="compact-card">
+                <header><strong>黒猫パーカー</strong><span class="count">4 tags</span></header>
+                <div class="tags"><span class="tag">black cat hoodie</span><span class="tag">cat paw gloves</span><span class="tag">cat tail</span></div>
+              </article>
+              <article class="compact-card">
+                <header><strong>パステル猫耳コーデ</strong><span class="count">5 tags</span></header>
+                <div class="tags"><span class="tag">pastel hoodie</span><span class="tag">cat ears</span><span class="tag">ribbon</span></div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

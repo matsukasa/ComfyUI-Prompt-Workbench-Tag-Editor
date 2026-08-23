@@ -3,6 +3,7 @@ import {
   favoriteTagKey,
   parseFavoriteSettings,
   sanitizeFavorites,
+  syncFavoritesToCatalog,
   toggleFavorite,
 } from "../src/domain/favorites";
 
@@ -17,8 +18,13 @@ it("normalizes favorites into shared prompt keys", () => {
 it("accepts the shared favorites JSON format", () => {
   expect(parseFavoriteSettings({ favorites: ["long_hair", "Long_Hair"] })).toEqual({
     favorites: ["long_hair"],
+    favoriteTagSets: [],
   });
-  expect(parseFavoriteSettings(["short_hair"])).toEqual({ favorites: ["short_hair"] });
+  expect(parseFavoriteSettings(["short_hair"])).toEqual({ favorites: ["short_hair"], favoriteTagSets: [] });
+  expect(parseFavoriteSettings({ favorites: [], favoriteTagSets: ["set-a", "Set-A"] })).toEqual({
+    favorites: [],
+    favoriteTagSets: ["set-a"],
+  });
 });
 
 it("toggles favorite keys without touching catalog data", () => {
@@ -27,3 +33,9 @@ it("toggles favorite keys without touching catalog data", () => {
   expect(toggleFavorite(added, "Long_Hair")).toEqual([]);
 });
 
+it("syncs favorites to tags in the loaded catalog", () => {
+  expect(syncFavoritesToCatalog(["long_hair", "old_tag", "solo"], ["solo", "long_hair"])).toEqual([
+    "long_hair",
+    "solo",
+  ]);
+});
