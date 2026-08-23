@@ -23,7 +23,7 @@ Prompt Workbenchに同梱されるタグセットには、[アリス服飾店（
 
 ## 必要環境
 
-- Windows 10 / 11
+- Windows 10 / 11、macOS、Linux
 - Node.js 20以上
 - npm 10以上
 - Chrome、Edge、Vivaldiなどの現行ブラウザ
@@ -32,7 +32,7 @@ Prompt Workbenchに同梱されるタグセットには、[アリス服飾店（
 
 ## 起動
 
-エクスプローラーから `start.bat` をダブルクリックします。
+Windowsでは、エクスプローラーから `start.bat` をダブルクリックします。
 
 PowerShellから起動する場合:
 
@@ -41,9 +41,17 @@ Set-Location 'D:\自作ComfyUIカスタムノード\ComfyUI-Prompt-Workbench-Tag
 .\start.bat
 ```
 
+macOS / Linuxから起動する場合:
+
+```bash
+cd /path/to/ComfyUI-Prompt-Workbench-Tag-Editor
+chmod +x ./start.sh
+./start.sh
+```
+
 手動で開発サーバーを起動する場合:
 
-```powershell
+```bash
 npm install --prefer-offline --no-audit --no-fund
 npm run dev
 ```
@@ -51,6 +59,12 @@ npm run dev
 表示された `http://localhost:5173` をブラウザで開きます。
 
 `http://192.168.x.x:5173` のようなLAN側URLでは、ブラウザの安全な接続として扱われず、ファイルの上書き保存APIを利用できない場合があります。上書き保存する場合は、起動したPC上のブラウザで `http://localhost:5173` を使ってください。
+
+標準では、このリポジトリの隣にある `../ComfyUI-Prompt-Workbench/data` をPrompt Workbenchのデータとして探します。WindowsではStability Matrixの一般的なインストール先も確認します。別の場所にあるデータを使う場合は、`PROMPT_WORKBENCH_DATA_DIR` を指定して起動してください。
+
+```bash
+PROMPT_WORKBENCH_DATA_DIR="/path/to/ComfyUI-Prompt-Workbench/data" npm run dev
+```
 
 ## 基本操作
 

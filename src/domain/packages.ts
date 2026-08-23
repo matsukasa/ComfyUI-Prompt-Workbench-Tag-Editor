@@ -22,6 +22,7 @@ export interface SharePackageManifest {
   package_id: string;
   package_name: string;
   package_version: number;
+  note?: string;
   contains: {
     catalog: boolean;
     tagsets: boolean;
@@ -469,6 +470,7 @@ export function createSharePackage(options: {
   packageName: string;
   packageId: string;
   packageVersion: number;
+  packageNote?: string;
   includeCatalog: boolean;
   includeTagSets: boolean;
   catalogBaseline?: CatalogDocument | null;
@@ -490,6 +492,8 @@ export function createSharePackage(options: {
     app_version: "tag-editor",
     created_at: new Date().toISOString(),
   };
+  const note = options.packageNote?.trim();
+  if (note) manifest.note = note.slice(0, 2000);
   const pkg: SharePackage = { manifest, changesCsv: "" };
   if (manifest.contains.catalog && options.catalogBaseline && options.catalogDocument) {
     pkg.catalogPatch = catalogPatch(options.catalogBaseline, options.catalogDocument);

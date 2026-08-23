@@ -25,7 +25,7 @@ Some tag sets bundled with Prompt Workbench include a selection of publicly post
 
 ## Requirements
 
-- Windows 10 / 11
+- Windows 10 / 11, macOS, or Linux
 - Node.js 20 or later
 - npm 10 or later
 - A current browser such as Chrome, Edge, or Vivaldi
@@ -34,7 +34,7 @@ Tag data is not sent to an external server. After startup, editing runs in your 
 
 ## Start
 
-Double-click `start.bat` from Explorer.
+On Windows, double-click `start.bat` from Explorer.
 
 To start from PowerShell:
 
@@ -43,9 +43,17 @@ Set-Location 'D:\自作ComfyUIカスタムノード\ComfyUI-Prompt-Workbench-Tag
 .\start.bat
 ```
 
-To start the development server manually:
+On macOS or Linux:
 
-```powershell
+```bash
+cd /path/to/ComfyUI-Prompt-Workbench-Tag-Editor
+chmod +x ./start.sh
+./start.sh
+```
+
+To start the development server manually on any OS:
+
+```bash
 npm install --prefer-offline --no-audit --no-fund
 npm run dev
 ```
@@ -53,6 +61,12 @@ npm run dev
 Open the displayed `http://localhost:5173` URL in your browser.
 
 When opened through a LAN URL such as `http://192.168.x.x:5173`, the browser may not treat the page as a secure local context, and overwrite-save APIs may be unavailable. Use `http://localhost:5173` on the same PC when you want overwrite save.
+
+By default, the editor looks for Prompt Workbench data next to this repository at `../ComfyUI-Prompt-Workbench/data`. On Windows it also checks the common Stability Matrix install path. If your data is elsewhere, start the server with `PROMPT_WORKBENCH_DATA_DIR`:
+
+```bash
+PROMPT_WORKBENCH_DATA_DIR="/path/to/ComfyUI-Prompt-Workbench/data" npm run dev
+```
 
 ## Basic Usage
 

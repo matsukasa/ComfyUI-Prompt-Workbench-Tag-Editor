@@ -15,7 +15,8 @@
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -31,6 +32,7 @@ body {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--accent, oklch(0.72 0.18 52));
   outline-offset: 2px;
@@ -292,9 +294,19 @@ button:disabled {
   display: grid;
   gap: 6px;
 }
-.settings-field input {
+.settings-field input,
+.settings-field textarea {
   width: 100%;
   min-width: 0;
+}
+.settings-field textarea {
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--surface-1);
+  color: var(--ink);
 }
 .primary-button {
   background: oklch(0.64 0.19 48);
@@ -1594,6 +1606,16 @@ button:disabled {
 .package-import-preview span {
   color: var(--muted);
   font-size: 12px;
+}
+.package-note {
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-0);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 .package-import-targets {
   display: flex;

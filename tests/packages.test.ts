@@ -190,6 +190,26 @@ test("share package zip includes tag set image assets", () => {
   assert.equal(parsed.imageAssets?.[0].zipPath, "assets/tag-set-images/set-a.webp");
 });
 
+test("share package manifest keeps an importer note", () => {
+  const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
+  const exporter = structuredClone(baseline);
+  exporter.tags[0].translationJa = "package note test";
+  const pkg = createSharePackage({
+    packageName: "Notes",
+    packageId: "pkg-notes",
+    packageVersion: 1,
+    packageNote: "モデルA向けです。\n既存の服装タグと一緒に使ってください。",
+    includeCatalog: true,
+    includeTagSets: false,
+    catalogBaseline: baseline,
+    catalogDocument: exporter,
+  });
+
+  const parsed = parsePackageZip(packageToZip(pkg));
+
+  assert.equal(parsed.manifest.note, "モデルA向けです。\n既存の服装タグと一緒に使ってください。");
+});
+
 test("share package import rejects unsafe image asset paths", () => {
   const tagSets = parseTagSetText(tagSetSource, "tag_sets.json");
   const pkg = createSharePackage({

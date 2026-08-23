@@ -623,6 +623,7 @@ export function App() {
   const [packageDialogMode, setPackageDialogMode] = useState<PackageDialogMode | null>(null);
   const [packageName, setPackageName] = useState(readPackageName);
   const [packageVersion, setPackageVersion] = useState(1);
+  const [packageNote, setPackageNote] = useState("");
   const [packageContentType, setPackageContentType] = useState<PackageContentType>("Full");
   const [packagePreview, setPackagePreview] = useState<ImportPreview | null>(null);
   const [packageImportSelection, setPackageImportSelection] = useState<ImportSelection>({ catalog: true, tagsets: true });
@@ -957,6 +958,7 @@ export function App() {
         packageName,
         packageId: readPackageId(),
         packageVersion,
+        packageNote,
         includeCatalog,
         includeTagSets,
         catalogBaseline: catalogExportBaseline,
@@ -967,7 +969,7 @@ export function App() {
     } catch {
       return null;
     }
-  }, [catalogExportBaseline, document, packageContentType, packageDialogMode, packageName, packageVersion, tagSetDocument, tagSetExportBaseline]);
+  }, [catalogExportBaseline, document, packageContentType, packageDialogMode, packageName, packageNote, packageVersion, tagSetDocument, tagSetExportBaseline]);
   const importHistory = useMemo<DisplayImportHistoryEntry[]>(() => {
     const entries = new Map<string, DisplayImportHistoryEntry>();
     for (const root of [document?.original, tagSetDocument?.original]) {
@@ -1191,6 +1193,7 @@ export function App() {
         packageName,
         packageId: readPackageId(),
         packageVersion,
+        packageNote,
         includeCatalog,
         includeTagSets,
         catalogBaseline: catalogExportBaseline,
@@ -1438,6 +1441,16 @@ export function App() {
                 onChange={(event) => setPackageVersion(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
               />
             </label>
+            <label className="settings-field">
+              <span>メモ</span>
+              <textarea
+                value={packageNote}
+                maxLength={2000}
+                rows={4}
+                onChange={(event) => setPackageNote(event.target.value)}
+                placeholder="例: 追加したタグセットの用途、注意点、推奨モデルなど"
+              />
+            </label>
             <div className="package-content-options" role="radiogroup" aria-label="書き出すデータ">
               {(["Catalog", "TagSets", "Full"] as PackageContentType[]).map((value) => (
                 <button
@@ -1462,6 +1475,7 @@ export function App() {
               <small>
                 削除操作は共有差分に含めません。changes.csv、manifest.json、patch JSONをZIPへ保存します。
               </small>
+              {packageExportPreview?.manifest.note && <small>メモ: {packageExportPreview.manifest.note}</small>}
             </div>
           </div>
         ) : (
@@ -1480,6 +1494,7 @@ export function App() {
                   {packagePreview.pkg.tagsetPatch?.operations.length ?? 0}件
                 </span>
                 <span>画像 {packagePreview.pkg.imageAssets?.length ?? 0}件</span>
+                {packagePreview.pkg.manifest.note && <p className="package-note">{packagePreview.pkg.manifest.note}</p>}
                 {packagePreview.conflicts.length > 0 && (
                   <span>
                     競合 {packagePreview.conflicts.length}件
