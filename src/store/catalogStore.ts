@@ -44,6 +44,7 @@ interface StoreState {
   setFavoriteFilter: (value: boolean) => void;
   selectTag: (uid: string, mode: "single" | "toggle" | "range", visibleIds: string[]) => void;
   selectMany: (uids: string[]) => void;
+  clearSelectionAnchor: () => void;
   clearSelection: () => void;
   applyTagMove: (targetCategoryId: string, beforeUid?: string) => void;
   applyCategoryMove: (activeId: string, overId: string) => void;
@@ -188,6 +189,7 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
       return { selectedTagIds: [uid], anchorTagId: uid };
     }),
   selectMany: (selectedTagIds) => set({ selectedTagIds, anchorTagId: selectedTagIds.at(-1) ?? null }),
+  clearSelectionAnchor: () => set({ anchorTagId: null }),
   clearSelection: () => set({ selectedTagIds: [], anchorTagId: null }),
   applyTagMove: (targetCategoryId, beforeUid) => {
     const selected = get().selectedTagIds;

@@ -360,6 +360,30 @@ function resolveSet(document: TagSetDocument, selection: SetSelection | null): T
   return resolveSmall(document, selection)?.sets[selection.setIndex] ?? null;
 }
 
+function findSmallSelectionById(document: TagSetDocument, smallId: string | undefined): SmallSelection | null {
+  if (!smallId) return null;
+  for (const [majorIndex, major] of document.majorCategories.entries()) {
+    for (const [mediumIndex, medium] of major.mediumCategories.entries()) {
+      const smallIndex = medium.smallCategories.findIndex((small) => small.id === smallId);
+      if (smallIndex >= 0) return { majorIndex, mediumIndex, smallIndex };
+    }
+  }
+  return null;
+}
+
+function findSetSelectionById(document: TagSetDocument, setId: string | undefined): SetSelection | null {
+  if (!setId) return null;
+  for (const [majorIndex, major] of document.majorCategories.entries()) {
+    for (const [mediumIndex, medium] of major.mediumCategories.entries()) {
+      for (const [smallIndex, small] of medium.smallCategories.entries()) {
+        const setIndex = small.sets.findIndex((setItem) => setItem.id === setId);
+        if (setIndex >= 0) return { majorIndex, mediumIndex, smallIndex, setIndex };
+      }
+    }
+  }
+  return null;
+}
+
 function sameSmall(left: SmallSelection, right: SmallSelection): boolean {
   return (
     left.majorIndex === right.majorIndex &&
@@ -918,13 +942,13 @@ export function TagSetEditor({
     const over = event.over?.data.current as DragData | undefined;
     let successful = false;
     let nextSmallSelection: SmallSelection | null = null;
-    let movedSmallSetCount = 0;
     if (!active || !over) {
       dragSounds.cancel();
       return;
     }
     if (active.type === "tag-set-set" && over.type === "tag-set-set-target") {
       let nextSetSelection: SetSelection | null = null;
+      let movedSetId: string | undefined;
       update((draft) => {
         const sourceSets =
           draft.majorCategories[active.majorIndex].mediumCategories[active.mediumIndex].smallCategories[
@@ -932,6 +956,7 @@ export function TagSetEditor({
           ].sets;
         const item = sourceSets.splice(active.setIndex, 1)[0];
         if (!item) return;
+        movedSetId = item.id;
         const targetSets =
           draft.majorCategories[over.majorIndex].mediumCategories[over.mediumIndex].smallCategories[
             over.smallIndex
@@ -943,12 +968,11 @@ export function TagSetEditor({
         nextSetSelection = { ...over, setIndex: insertIndex };
       });
       if (nextSetSelection) {
-        setSmallSelection({
-          majorIndex: nextSetSelection.majorIndex,
-          mediumIndex: nextSetSelection.mediumIndex,
-          smallIndex: nextSetSelection.smallIndex,
-        });
-        setSetSelection(nextSetSelection);
+        if (sameSmall(active, nextSetSelection)) {
+          setSetSelection(nextSetSelection);
+        } else if (selectedSet?.id === movedSetId) {
+          setSetSelection(null);
+        }
         setExpandedCategoryKeys((current) => new Set([
           ...current,
           tagSetCategoryKey("major", nextSetSelection),
@@ -963,6 +987,7 @@ export function TagSetEditor({
     }
     if (active.type === "tag-set-set" && over.type === "tag-set-category-target" && over.level === "small") {
       let nextSetSelection: SetSelection | null = null;
+      let movedSetId: string | undefined;
       update((draft) => {
         const sourceSets =
           draft.majorCategories[active.majorIndex].mediumCategories[active.mediumIndex].smallCategories[
@@ -970,6 +995,7 @@ export function TagSetEditor({
           ].sets;
         const item = sourceSets.splice(active.setIndex, 1)[0];
         if (!item) return;
+        movedSetId = item.id;
         if (over.majorIndex === undefined || over.mediumIndex === undefined || over.smallIndex === undefined) return;
         const targetSets =
           draft.majorCategories[over.majorIndex].mediumCategories[over.mediumIndex].smallCategories[over.smallIndex].sets;
@@ -983,12 +1009,7 @@ export function TagSetEditor({
         };
       });
       if (nextSetSelection) {
-        setSmallSelection({
-          majorIndex: nextSetSelection.majorIndex,
-          mediumIndex: nextSetSelection.mediumIndex,
-          smallIndex: nextSetSelection.smallIndex,
-        });
-        setSetSelection(nextSetSelection);
+        if (selectedSet?.id === movedSetId) setSetSelection(null);
         setExpandedCategoryKeys((current) => new Set([
           ...current,
           tagSetCategoryKey("major", nextSetSelection),
@@ -1003,6 +1024,10 @@ export function TagSetEditor({
       dragSounds.cancel();
       return;
     }
+    const selectedSmallId = selectedSmall?.id;
+    const selectedSetId = selectedSet?.id;
+    let preservedSmallSelection: SmallSelection | null = null;
+    let preservedSetSelection: SetSelection | null = null;
     update((draft) => {
       if (active.level === "major" && over.level === "major") {
         moveItem(draft.majorCategories, active.majorIndex ?? -1, over.majorIndex ?? -1);
@@ -1026,7 +1051,6 @@ export function TagSetEditor({
           draft.majorCategories[active.majorIndex]?.mediumCategories[active.mediumIndex]?.smallCategories;
         const item = sourceSmalls?.splice(active.smallIndex, 1)[0];
         if (!item) return;
-        movedSmallSetCount = item.sets.length;
         const targetMajorIndex = over.majorIndex ?? active.majorIndex;
         const targetMediumIndex = over.level === "medium" ? over.mediumIndex : over.mediumIndex ?? active.mediumIndex;
         if (targetMajorIndex === undefined || targetMediumIndex === undefined) return;
@@ -1041,10 +1065,18 @@ export function TagSetEditor({
         targetSmalls.splice(insertIndex, 0, item);
         nextSmallSelection = { majorIndex: targetMajorIndex, mediumIndex: targetMediumIndex, smallIndex: insertIndex };
       }
+      preservedSmallSelection = findSmallSelectionById(draft, selectedSmallId);
+      preservedSetSelection = findSetSelectionById(draft, selectedSetId);
     });
+    if (preservedSmallSelection) {
+      setSmallSelection(preservedSmallSelection);
+      setSetSelection(
+        preservedSetSelection && sameSmall(preservedSmallSelection, preservedSetSelection)
+          ? preservedSetSelection
+          : null,
+      );
+    }
     if (nextSmallSelection) {
-      setSmallSelection(nextSmallSelection);
-      setSetSelection(movedSmallSetCount > 0 ? { ...nextSmallSelection, setIndex: 0 } : null);
       setExpandedCategoryKeys((current) => new Set([
         ...current,
         tagSetCategoryKey("major", nextSmallSelection),

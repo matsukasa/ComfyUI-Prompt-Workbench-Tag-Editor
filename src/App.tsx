@@ -1657,6 +1657,7 @@ export function App() {
     store.selectMany(moveMenu.tagIds);
     store.applyTagMove(target.id);
     setRecentlyMovedTagIds(moveMenu.tagIds);
+    store.clearSelectionAnchor();
     store.clearSelection();
     if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
     recentMoveTimer.current = window.setTimeout(() => setRecentlyMovedTagIds([]), 600);
@@ -1767,6 +1768,7 @@ export function App() {
           : [String(event.active.data.current?.tagId)];
         store.applyTagMove(target.id, overData.type === "tag-target" ? String(overData.tagId) : undefined);
         setRecentlyMovedTagIds(movedTagIds);
+        store.clearSelectionAnchor();
         if (recentMoveTimer.current !== null) window.clearTimeout(recentMoveTimer.current);
         recentMoveTimer.current = window.setTimeout(() => setRecentlyMovedTagIds([]), 600);
         setToast({

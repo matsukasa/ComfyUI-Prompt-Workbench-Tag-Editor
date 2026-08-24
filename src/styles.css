@@ -1755,10 +1755,12 @@ button:disabled {
 .error-toast {
   background: oklch(0.28 0.09 28);
   border: 1px solid var(--danger);
+  color: oklch(0.94 0.03 28);
 }
 .success-toast {
   background: oklch(0.27 0.08 155);
   border: 1px solid var(--emerald);
+  color: oklch(0.94 0.035 155);
 }
 .success-toast > span {
   min-width: 0;
@@ -1766,18 +1768,18 @@ button:disabled {
   gap: 2px;
 }
 .success-toast strong {
-  color: var(--ink);
+  color: oklch(0.98 0.018 155);
 }
 .success-toast small {
-  color: color-mix(in oklch, var(--ink) 72%, var(--muted));
+  color: oklch(0.86 0.035 155);
 }
 .success-toast button {
   min-height: 26px;
   margin-inline-start: 8px;
   padding: 3px 7px;
-  border-color: color-mix(in oklch, var(--accent) 65%, var(--line));
-  background: color-mix(in oklch, var(--accent) 10%, var(--surface-1));
-  color: var(--accent);
+  border-color: oklch(0.75 0.12 155);
+  background: oklch(0.35 0.08 155);
+  color: oklch(0.94 0.06 155);
   font-weight: 750;
   white-space: nowrap;
 }
@@ -1787,6 +1789,7 @@ button:disabled {
   width: 24px;
   padding: 0;
   background: transparent;
+  color: oklch(0.94 0.03 28);
 }
 .loading-screen {
   min-height: 100vh;
