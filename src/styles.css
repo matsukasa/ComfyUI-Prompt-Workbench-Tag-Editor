@@ -1883,9 +1883,21 @@ button:disabled {
   background: color-mix(in oklch, var(--surface-0) 94%, transparent);
 }
 
-.tag-set-panel-head > div {
+.tag-set-panel-head > div,
+.tag-set-list-head-row > div {
   display: grid;
   gap: 3px;
+}
+
+.tag-set-list-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tag-set-list-head-row button {
+  flex: 0 0 auto;
 }
 
 .tag-set-panel-head strong {

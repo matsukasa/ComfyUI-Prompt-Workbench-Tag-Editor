@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseCatalogText } from "../src/domain/catalog.ts";
+import { itemOrigin, markLocal } from "../src/domain/lineage.ts";
 import { deleteTags } from "../src/domain/operations.ts";
 import { createSharePackage, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
 import { parseTagSetText } from "../src/domain/tagSets.ts";
@@ -77,7 +78,7 @@ test("share packages do not revive a default tag deleted by the importing user",
     translationJa: "",
     aliases: [],
     order: 3,
-    raw: { id: "D", name: "d" },
+    raw: markLocal({ id: "D", name: "d" }),
   });
 
   const importingUser = deleteTags(
@@ -113,7 +114,7 @@ test("share packages allow importing only one included data type from a full pac
     translationJa: "",
     aliases: [],
     order: 3,
-    raw: { id: "D", name: "d" },
+    raw: markLocal({ id: "D", name: "d" }),
   });
   const nextTagSets = structuredClone(tagSets);
   nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets.push({
@@ -126,7 +127,7 @@ test("share packages allow importing only one included data type from a full pac
     imageUrl: "",
     imagePath: "",
     tags: ["b"],
-    raw: { id: "set-b", name: "Set B", tags: ["b"] },
+    raw: markLocal({ id: "set-b", name: "Set B", tags: ["b"] }),
   });
 
   const pkg = createSharePackage({
@@ -162,6 +163,9 @@ test("share package zip includes tag set image assets", () => {
     "/prompt-workbench-data/tag-set-images/set-a.webp";
   nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].imageUrl =
     "/prompt-workbench-data/tag-set-images/set-a.webp";
+  nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].raw = markLocal(
+    nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].raw,
+  );
   const pkg = createSharePackage({
     packageName: "Images",
     packageId: "pkg-images",
@@ -194,6 +198,7 @@ test("share package manifest keeps an importer note", () => {
   const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
   const exporter = structuredClone(baseline);
   exporter.tags[0].translationJa = "package note test";
+  exporter.tags[0].raw = markLocal(exporter.tags[0].raw);
   const pkg = createSharePackage({
     packageName: "Notes",
     packageId: "pkg-notes",
@@ -287,6 +292,132 @@ test("share package export excludes deleted categories and tag sets", () => {
   assert.equal(pkg.changesCsv.includes("set-a"), false);
 });
 
+test("share package export defaults to local-only catalog operations", () => {
+  const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
+  const exporter = structuredClone(baseline);
+  const localCategory = exporter.categories.find((category) => category.id === "medium")!;
+  localCategory.labelJa = "Local Medium";
+  localCategory.raw = markLocal(localCategory.raw);
+  const defaultCategory = exporter.categories.find((category) => category.id === "small")!;
+  defaultCategory.labelJa = "Default Small Changed";
+  const importedCategory = { ...defaultCategory, id: "imported-small", labelJa: "Imported Small", raw: { id: "imported-small", prompt_workbench_meta: { origin: "imported" } } };
+  exporter.categories.push(importedCategory);
+  const localTag = exporter.tags.find((tag) => tag.sourceId === "A")!;
+  localTag.translationJa = "local tag";
+  localTag.raw = markLocal(localTag.raw);
+  const defaultTag = exporter.tags.find((tag) => tag.sourceId === "B")!;
+  defaultTag.translationJa = "default tag";
+  const importedTag = exporter.tags.find((tag) => tag.sourceId === "C")!;
+  importedTag.translationJa = "imported tag";
+  importedTag.raw = { ...importedTag.raw, prompt_workbench_meta: { origin: "imported" } };
+  exporter.tags.push({
+    uid: "tag:imported-small:D",
+    sourceId: "D",
+    categoryId: "imported-small",
+    prompt: "d",
+    translationJa: "",
+    aliases: [],
+    order: 0,
+    raw: markLocal({ id: "D", name: "d" }),
+  });
+
+  const pkg = createSharePackage({
+    packageName: "LocalCatalog",
+    packageId: "pkg-local-catalog",
+    packageVersion: 1,
+    includeCatalog: true,
+    includeTagSets: false,
+    catalogBaseline: baseline,
+    catalogDocument: exporter,
+  });
+  const operations = pkg.catalogPatch?.operations ?? [];
+
+  assert.deepEqual(operations.map((operation) => `${operation.type}:${operation.target_id}`).sort(), [
+    "update_category:medium",
+    "update_tag:A",
+  ]);
+  assert.equal(pkg.exportSummary?.excludedCatalog, 5);
+});
+
+test("share package export defaults to local-only tag set operations and skips imported category paths", () => {
+  const baseline = parseTagSetText(tagSetSource, "tag_sets.json");
+  const exporter = structuredClone(baseline);
+  const medium = exporter.majorCategories[0].mediumCategories[0];
+  const defaultSmall = medium.smallCategories[0];
+  defaultSmall.labelJa = "Default TS Small Changed";
+  defaultSmall.sets[0].tags = ["default set change"];
+  const localSmall = {
+    ...structuredClone(defaultSmall),
+    id: "ts-local-small",
+    labelJa: "TS Local Small",
+    raw: markLocal({ id: "ts-local-small", label_ja: "TS Local Small" }),
+    sets: [
+      {
+        id: "set-local",
+        name: "Set Local",
+        nameJa: "Set Local",
+        nameEn: "",
+        creator: "",
+        sourceUrl: "",
+        imageUrl: "",
+        imagePath: "",
+        tags: ["local"],
+        raw: markLocal({ id: "set-local", name: "Set Local", tags: ["local"] }),
+      },
+    ],
+  };
+  const importedSmall = {
+    ...structuredClone(defaultSmall),
+    id: "ts-imported-small",
+    labelJa: "TS Imported Small",
+    raw: { id: "ts-imported-small", label_ja: "TS Imported Small", prompt_workbench_meta: { origin: "imported" } },
+    sets: [
+      {
+        id: "set-local-under-imported",
+        name: "Set Local Under Imported",
+        nameJa: "Set Local Under Imported",
+        nameEn: "",
+        creator: "",
+        sourceUrl: "",
+        imageUrl: "",
+        imagePath: "",
+        tags: ["local"],
+        raw: markLocal({ id: "set-local-under-imported", name: "Set Local Under Imported", tags: ["local"] }),
+      },
+      {
+        id: "set-imported",
+        name: "Set Imported",
+        nameJa: "Set Imported",
+        nameEn: "",
+        creator: "",
+        sourceUrl: "",
+        imageUrl: "",
+        imagePath: "",
+        tags: ["imported"],
+        raw: { id: "set-imported", name: "Set Imported", tags: ["imported"], prompt_workbench_meta: { origin: "imported" } },
+      },
+    ],
+  };
+  medium.smallCategories.push(localSmall, importedSmall);
+
+  const pkg = createSharePackage({
+    packageName: "LocalTagSets",
+    packageId: "pkg-local-tagsets",
+    packageVersion: 1,
+    includeCatalog: false,
+    includeTagSets: true,
+    tagSetBaseline: baseline,
+    tagSetDocument: exporter,
+  });
+  const operations = pkg.tagsetPatch?.operations ?? [];
+
+  assert.deepEqual(operations.map((operation) => `${operation.type}:${operation.target_id}`).sort(), [
+    "add_tagset:set-local",
+    "add_tagset_category:small:ts-local-small",
+  ]);
+  assert.equal(pkg.exportSummary?.excludedTagSets, 5);
+});
+
 test("share package changes CSV has a Japanese header and UTF-8 BOM", () => {
   const catalog = parseCatalogText(catalogSource, "tag_catalog.json");
   const nextCatalog = structuredClone(catalog);
@@ -298,7 +429,7 @@ test("share package changes CSV has a Japanese header and UTF-8 BOM", () => {
     translationJa: "",
     aliases: [],
     order: 3,
-    raw: { id: "D", name: "d" },
+    raw: markLocal({ id: "D", name: "d" }),
   });
 
   const pkg = createSharePackage({
@@ -320,6 +451,7 @@ test("share package import can skip conflicting operations", () => {
   const exporter = structuredClone(baseline);
   const packageTagA = exporter.tags.find((tag) => tag.sourceId === "A")!;
   packageTagA.translationJa = "package change";
+  packageTagA.raw = markLocal(packageTagA.raw);
   exporter.tags.push({
     uid: "tag:small:D",
     sourceId: "D",
@@ -328,7 +460,7 @@ test("share package import can skip conflicting operations", () => {
     translationJa: "",
     aliases: [],
     order: 3,
-    raw: { id: "D", name: "d" },
+    raw: markLocal({ id: "D", name: "d" }),
   });
 
   const importer = structuredClone(baseline);
@@ -351,6 +483,128 @@ test("share package import can skip conflicting operations", () => {
   assert.equal(preview.nextCatalog?.tags.some((tag) => tag.sourceId === "D"), true);
 });
 
+test("catalog import preserves explicit default origin but keeps ordinary imports marked imported", () => {
+  const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
+  const pkg = parsePackageZip(packageToZip({
+    manifest: {
+      format_version: 1,
+      package_id: "pkg-catalog-origin",
+      package_name: "CatalogOrigin",
+      package_version: 3,
+      contains: { catalog: true, tagsets: false },
+      created_at: "2026-08-25T00:00:00.000Z",
+    },
+    catalogPatch: {
+      operations: [
+        {
+          type: "add_tag",
+          target_type: "tag",
+          target_id: "D",
+          tag: {
+            uid: "tag:small:D",
+            sourceId: "D",
+            categoryId: "small",
+            prompt: "d",
+            translationJa: "",
+            aliases: [],
+            order: 3,
+            raw: { id: "D", name: "d", prompt_workbench_meta: { origin: "default" } },
+          },
+        },
+        {
+          type: "add_tag",
+          target_type: "tag",
+          target_id: "E",
+          tag: {
+            uid: "tag:small:E",
+            sourceId: "E",
+            categoryId: "small",
+            prompt: "e",
+            translationJa: "",
+            aliases: [],
+            order: 4,
+            raw: { id: "E", name: "e" },
+          },
+        },
+      ],
+    },
+    imageAssets: [],
+    changesCsv: "",
+  }));
+  const preview = previewImport({ pkg, catalogDocument: baseline, selection: { catalog: true, tagsets: false } });
+  const importedTags = new Map(preview.nextCatalog?.tags.map((item) => [item.prompt, item]) ?? []);
+
+  assert.equal(itemOrigin(importedTags.get("d")!.raw), "default");
+  assert.equal(importedTags.get("d")!.raw.prompt_workbench_meta?.package_id, "pkg-catalog-origin");
+  assert.equal(importedTags.get("d")!.raw.prompt_workbench_meta?.package_version, 3);
+  assert.equal(itemOrigin(importedTags.get("e")!.raw), "imported");
+});
+
+test("tag set import preserves only explicit default origin while recording package metadata", () => {
+  const baseline = parseTagSetText(tagSetSource, "tag_sets.json");
+  const origins = [
+    ["set-default", "default"],
+    ["set-unset", undefined],
+    ["set-local", "local"],
+    ["set-imported", "imported"],
+    ["set-invalid", "custom"],
+  ] as const;
+  const pkg = parsePackageZip(packageToZip({
+    manifest: {
+      format_version: 1,
+      package_id: "pkg-origin",
+      package_name: "Origin",
+      package_version: 7,
+      contains: { catalog: false, tagsets: true },
+      created_at: "2026-08-25T00:00:00.000Z",
+    },
+    tagsetPatch: {
+      operations: origins.map(([id, origin], order) => ({
+        type: "add_tagset",
+        target_type: "tagset",
+        target_id: id,
+        tagset: {
+          id,
+          smallId: "ts-small",
+          order: order + 1,
+          name: id,
+          nameJa: id,
+          nameEn: "",
+          creator: "",
+          sourceUrl: "",
+          imageUrl: "",
+          imagePath: "",
+          tags: [id],
+          raw: {
+            id,
+            name: id,
+            tags: [id],
+            ...(origin ? { prompt_workbench_meta: { origin } } : {}),
+          },
+        },
+      })),
+    },
+    imageAssets: [],
+    changesCsv: "",
+  }));
+  const preview = previewImport({
+    pkg,
+    tagSetDocument: baseline,
+    selection: { catalog: false, tagsets: true },
+  });
+  const importedSets = new Map(
+    preview.nextTagSets?.majorCategories[0].mediumCategories[0].smallCategories[0].sets.map((item) => [item.id, item]) ?? [],
+  );
+
+  assert.equal(itemOrigin(importedSets.get("set-default")!.raw), "default");
+  assert.equal(itemOrigin(importedSets.get("set-unset")!.raw), "imported");
+  assert.equal(itemOrigin(importedSets.get("set-local")!.raw), "imported");
+  assert.equal(itemOrigin(importedSets.get("set-imported")!.raw), "imported");
+  assert.equal(itemOrigin(importedSets.get("set-invalid")!.raw), "imported");
+  assert.equal(importedSets.get("set-default")!.raw.prompt_workbench_meta?.package_id, "pkg-origin");
+  assert.equal(importedSets.get("set-default")!.raw.prompt_workbench_meta?.package_version, 7);
+});
+
 test("tag set import conflicts show category path instead of internal ids", () => {
   const baseline = parseTagSetText(tagSetSource, "tag_sets.json");
   const baseMajor = baseline.majorCategories[0];
@@ -365,6 +619,9 @@ test("tag set import conflicts show category path instead of internal ids", () =
   baseSet.name = "one person";
   const exporter = structuredClone(baseline);
   exporter.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].tags = ["package change"];
+  exporter.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].raw = markLocal(
+    exporter.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].raw,
+  );
   const importer = structuredClone(baseline);
   importer.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].tags = ["local change"];
 
@@ -400,7 +657,7 @@ test("share package import keeps local default tombstones when a package adds ne
     translationJa: "",
     aliases: [],
     order: 3,
-    raw: { id: "D", name: "d" },
+    raw: markLocal({ id: "D", name: "d" }),
   });
   const importingUser = deleteTags(
     oldDefault,

@@ -1,5 +1,5 @@
 import { serializeCatalog } from "./catalog";
-import { addImportHistory, getWorkbenchMeta, markImported, writeWorkbenchMeta } from "./lineage";
+import { addImportHistory, getWorkbenchMeta, itemOrigin, markImported, writeWorkbenchMeta } from "./lineage";
 import { serializeTagSetDocument } from "./tagSets";
 import type {
   CatalogDocument,
@@ -16,6 +16,7 @@ import type {
 } from "./types";
 
 export type PackageContentType = "Catalog" | "TagSets" | "Full";
+export type PackageExportScope = "localOnly";
 
 export interface SharePackageManifest {
   format_version: 1;
@@ -69,6 +70,10 @@ export interface SharePackage {
   catalogPatch?: SharePatch;
   tagsetPatch?: SharePatch;
   imageAssets?: SharePackageImageAsset[];
+  exportSummary?: {
+    excludedCatalog: number;
+    excludedTagSets: number;
+  };
   changesCsv: string;
 }
 
@@ -252,11 +257,32 @@ export function packageFileName(
   return `PromptWorkbench_${sanitizePackageNameForFile(packageName)}_${contentType}_v${Math.max(1, Math.floor(packageVersion))}_${date}_${time}.zip`;
 }
 
-function catalogPatch(before: CatalogDocument, after: CatalogDocument): SharePatch {
+interface ExportPatchResult {
+  patch: SharePatch;
+  excludedCount: number;
+}
+
+function catalogCategoryHasImportedAncestor(category: CategoryNode, categories: Map<string, CategoryNode>): boolean {
+  let current: CategoryNode | undefined = category;
+  while (current) {
+    if (itemOrigin(current.raw) === "imported") return true;
+    current = current.parentId ? categories.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+function catalogPatch(before: CatalogDocument, after: CatalogDocument, exportScope: PackageExportScope): ExportPatchResult {
   const operations: PatchOperation[] = [];
+  let excludedCount = 0;
   const beforeCategories = new Map(before.categories.map((category) => [category.id, category]));
   const afterCategories = new Map(after.categories.map((category) => [category.id, category]));
   for (const category of after.categories) {
+    if (exportScope === "localOnly" && itemOrigin(category.raw) !== "local") {
+      if (!beforeCategories.has(category.id) || !jsonEqual(withoutOrder(categoryPayload(beforeCategories.get(category.id)!)), withoutOrder(categoryPayload(category)))) {
+        excludedCount += 1;
+      }
+      continue;
+    }
     const previous = beforeCategories.get(category.id);
     const payload = categoryPayload(category);
     if (!previous) operations.push({ type: "add_category", target_type: "category", target_id: category.id, category: payload });
@@ -276,6 +302,16 @@ function catalogPatch(before: CatalogDocument, after: CatalogDocument): SharePat
     const id = tagIdentity(tag);
     const previous = beforeTags.get(id);
     const payload = tagPayload(tag);
+    const targetCategory = afterCategories.get(tag.categoryId);
+    const includeTag =
+      exportScope === "localOnly" &&
+      itemOrigin(tag.raw) === "local" &&
+      Boolean(targetCategory) &&
+      !catalogCategoryHasImportedAncestor(targetCategory, afterCategories);
+    if (!includeTag) {
+      if (!previous || !jsonEqual(withoutOrder(tagPayload(previous)), withoutOrder(payload))) excludedCount += 1;
+      continue;
+    }
     if (!previous) operations.push({ type: "add_tag", target_type: "tag", target_id: id, tag: payload });
     else if (!jsonEqual(withoutOrder(tagPayload(previous)), withoutOrder(payload)))
       operations.push({
@@ -286,7 +322,7 @@ function catalogPatch(before: CatalogDocument, after: CatalogDocument): SharePat
         tag: payload,
       });
   }
-  return { operations };
+  return { patch: { operations }, excludedCount };
 }
 
 function flattenTagSets(document: TagSetDocument): Map<string, { set: TagSetItem; smallId: string; order: number }> {
@@ -350,9 +386,9 @@ function tagSetDisplayName(document: TagSetDocument, id: string, set?: JsonObjec
   return `タグセット「${name}」`;
 }
 
-function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument): PatchOperation[] {
+function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument, exportScope: PackageExportScope): ExportPatchResult {
   const operations: PatchOperation[] = [];
-  const afterIds = new Set<string>();
+  let excludedCount = 0;
   const add = (type: string, id: string, category: JsonObject) =>
     operations.push({ type, target_type: "tagset_category", target_id: id, category });
   const visit = (document: TagSetDocument, sink: Map<string, JsonObject>) => {
@@ -394,8 +430,12 @@ function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument)
   const afterMap = new Map<string, JsonObject>();
   visit(before, beforeMap);
   visit(after, afterMap);
-  afterMap.forEach((_value, id) => afterIds.add(id));
   afterMap.forEach((category, id) => {
+    if (exportScope === "localOnly" && itemOrigin((asObject(category.raw) ?? {}) as JsonObject) !== "local") {
+      const previous = beforeMap.get(id);
+      if (!previous || !jsonEqual(withoutOrder(previous), withoutOrder(category))) excludedCount += 1;
+      return;
+    }
     const previous = beforeMap.get(id);
     if (!previous) add("add_tagset_category", id, category);
     else if (!jsonEqual(withoutOrder(previous), withoutOrder(category)))
@@ -407,16 +447,42 @@ function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument)
         category,
       });
   });
-  return operations;
+  return { patch: { operations }, excludedCount };
 }
 
-function tagSetPatch(before: TagSetDocument, after: TagSetDocument): SharePatch {
-  const operations = tagSetCategoryOperations(before, after);
+function tagSetCategoryImportedPaths(document: TagSetDocument): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  for (const major of document.majorCategories) {
+    const majorImported = itemOrigin(major.raw) === "imported";
+    result.set(major.id, majorImported);
+    for (const medium of major.mediumCategories) {
+      const mediumImported = majorImported || itemOrigin(medium.raw) === "imported";
+      result.set(medium.id, mediumImported);
+      for (const small of medium.smallCategories) {
+        result.set(small.id, mediumImported || itemOrigin(small.raw) === "imported");
+      }
+    }
+  }
+  return result;
+}
+
+function tagSetPatch(before: TagSetDocument, after: TagSetDocument, exportScope: PackageExportScope): ExportPatchResult {
+  const categoryResult = tagSetCategoryOperations(before, after, exportScope);
+  const operations = categoryResult.patch.operations;
+  let excludedCount = categoryResult.excludedCount;
   const beforeSets = flattenTagSets(before);
   const afterSets = flattenTagSets(after);
+  const importedCategoryPaths = tagSetCategoryImportedPaths(after);
   for (const item of afterSets.values()) {
     const previous = beforeSets.get(item.set.id);
     const payload = setPayload(item.set, item.smallId, item.order);
+    const includeSet = exportScope === "localOnly" && itemOrigin(item.set.raw) === "local" && !importedCategoryPaths.get(item.smallId);
+    if (!includeSet) {
+      if (!previous || !jsonEqual(withoutOrder(setPayload(previous.set, previous.smallId, previous.order)), withoutOrder(payload))) {
+        excludedCount += 1;
+      }
+      continue;
+    }
     if (!previous) operations.push({ type: "add_tagset", target_type: "tagset", target_id: item.set.id, tagset: payload });
     else if (!jsonEqual(withoutOrder(setPayload(previous.set, previous.smallId, previous.order)), withoutOrder(payload)))
       operations.push({
@@ -427,7 +493,7 @@ function tagSetPatch(before: TagSetDocument, after: TagSetDocument): SharePatch 
         tagset: payload,
       });
   }
-  return { operations };
+  return { patch: { operations }, excludedCount };
 }
 
 function csvCell(value: unknown): string {
@@ -477,7 +543,9 @@ export function createSharePackage(options: {
   catalogDocument?: CatalogDocument | null;
   tagSetBaseline?: TagSetDocument | null;
   tagSetDocument?: TagSetDocument | null;
+  exportScope?: PackageExportScope;
 }): SharePackage {
+  const exportScope = options.exportScope ?? "localOnly";
   const manifest: SharePackageManifest = {
     format_version: 1,
     package_id: options.packageId,
@@ -494,12 +562,16 @@ export function createSharePackage(options: {
   };
   const note = options.packageNote?.trim();
   if (note) manifest.note = note.slice(0, 2000);
-  const pkg: SharePackage = { manifest, changesCsv: "" };
+  const pkg: SharePackage = { manifest, exportSummary: { excludedCatalog: 0, excludedTagSets: 0 }, changesCsv: "" };
   if (manifest.contains.catalog && options.catalogBaseline && options.catalogDocument) {
-    pkg.catalogPatch = catalogPatch(options.catalogBaseline, options.catalogDocument);
+    const result = catalogPatch(options.catalogBaseline, options.catalogDocument, exportScope);
+    pkg.catalogPatch = result.patch;
+    pkg.exportSummary.excludedCatalog = result.excludedCount;
   }
   if (manifest.contains.tagsets && options.tagSetBaseline && options.tagSetDocument) {
-    pkg.tagsetPatch = tagSetPatch(options.tagSetBaseline, options.tagSetDocument);
+    const result = tagSetPatch(options.tagSetBaseline, options.tagSetDocument, exportScope);
+    pkg.tagsetPatch = result.patch;
+    pkg.exportSummary.excludedTagSets = result.excludedCount;
   }
   pkg.changesCsv = changesCsv(pkg);
   return pkg;

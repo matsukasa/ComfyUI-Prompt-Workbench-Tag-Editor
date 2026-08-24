@@ -63,6 +63,11 @@ interface SetSelection extends SmallSelection {
   setIndex: number;
 }
 
+interface TagSetSearchRow {
+  setItem: TagSetItem;
+  selection: SetSelection;
+}
+
 interface CategoryDragData extends Partial<SmallSelection> {
   type: "tag-set-category";
   level: TagSetCategoryLevel;
@@ -638,9 +643,22 @@ export function TagSetEditor({
     );
   }, [addCategoryLevel, document]);
   const filteredSets = useMemo(() => {
-    const sets = selectedSmall?.sets ?? [];
-    return sets
-      .map((setItem, index) => ({ setItem, index }))
+    const rows: TagSetSearchRow[] = setNeedle
+      ? document.majorCategories.flatMap((major, majorIndex) =>
+        major.mediumCategories.flatMap((medium, mediumIndex) =>
+          medium.smallCategories.flatMap((small, smallIndex) =>
+            small.sets.map((setItem, setIndex) => ({
+              setItem,
+              selection: { majorIndex, mediumIndex, smallIndex, setIndex },
+            })),
+          ),
+        ),
+      )
+      : (selectedSmall?.sets ?? []).map((setItem, setIndex) => ({
+        setItem,
+        selection: { ...smallSelection, setIndex },
+      }));
+    return rows
       .filter(({ setItem }) => !showFavoritesOnly || favoriteTagSetKeys.has(favoriteTagSetKey(setItem.id)))
       .filter(({ setItem }) => {
         if (!setNeedle) return true;
@@ -648,7 +666,7 @@ export function TagSetEditor({
           setNeedle,
         );
       });
-  }, [favoriteTagSetKeys, selectedSmall, setNeedle, showFavoritesOnly]);
+  }, [document, favoriteTagSetKeys, selectedSmall, setNeedle, showFavoritesOnly, smallSelection]);
 
   const update = (recipe: (draft: TagSetDocument) => void) => {
     const draft = structuredClone(document);
@@ -1445,12 +1463,6 @@ export function TagSetEditor({
 
       <section className="tag-set-list-panel" aria-label="タグセット一覧">
         <div className="tag-set-panel-head">
-          <div>
-            <strong>{selectedSmall?.labelJa ?? "小分類なし"}</strong>
-            <span>
-              {[selectedMajor?.labelJa, selectedMedium?.labelJa].filter(Boolean).join(" > ") || "分類未選択"}
-            </span>
-          </div>
           <label className="tag-set-search">
             <Search />
             <input
@@ -1465,28 +1477,43 @@ export function TagSetEditor({
               </button>
             )}
           </label>
-          <button type="button" onClick={addSet} disabled={!selectedSmall}>
-            <Plus />
-            セット追加
-          </button>
+          <div className="tag-set-list-head-row">
+            <div>
+              <strong>{selectedSmall?.labelJa ?? "小分類なし"}</strong>
+              <span>
+                {[selectedMajor?.labelJa, selectedMedium?.labelJa].filter(Boolean).join(" > ") || "分類未選択"}
+              </span>
+            </div>
+            <button type="button" onClick={addSet} disabled={!selectedSmall}>
+              <Plus />
+              セット追加
+            </button>
+          </div>
         </div>
         <div className="tag-set-list">
           {filteredSets.length ? (
-            filteredSets.map(({ setItem, index }) => {
+            filteredSets.map(({ setItem, selection }) => {
               const selected =
                 setSelection &&
-                sameSmall(setSelection, smallSelection) &&
-                setSelection.setIndex === index;
+                sameSmall(setSelection, selection) &&
+                setSelection.setIndex === selection.setIndex;
               return (
                 <TagSetSetRow
                   key={setItem.id}
                   setItem={setItem}
-                  index={index}
-                  selection={{ ...smallSelection, setIndex: index }}
+                  index={selection.setIndex}
+                  selection={selection}
                   selected={Boolean(selected)}
                   favorite={favoriteTagSetKeys.has(favoriteTagSetKey(setItem.id))}
                   imageSrc={imagePreviewUrls[setItem.id] || savedTagSetImageUrl(setItem.imagePath, promptWorkbenchDataDir) || setItem.imageUrl}
-                  onSelect={() => setSetSelection({ ...smallSelection, setIndex: index })}
+                  onSelect={() => {
+                    setSmallSelection({
+                      majorIndex: selection.majorIndex,
+                      mediumIndex: selection.mediumIndex,
+                      smallIndex: selection.smallIndex,
+                    });
+                    setSetSelection(selection);
+                  }}
                   onFavoriteMenu={(targetSet, point) => {
                     setFavoriteMenu({
                       setId: targetSet.id,
@@ -1496,7 +1523,7 @@ export function TagSetEditor({
                     });
                   }}
                   onDelete={() => {
-                    deleteSet({ ...smallSelection, setIndex: index }, setItem);
+                    deleteSet(selection, setItem);
                   }}
                 />
               );

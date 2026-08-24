@@ -966,6 +966,7 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
+        exportScope: "localOnly",
       });
     } catch {
       return null;
@@ -1201,6 +1202,7 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
+        exportScope: "localOnly",
       });
       if (!pkg.manifest.contains.catalog && !pkg.manifest.contains.tagsets) {
         store.setError("書き出せる差分がありません。タグカタログまたはタグセットを読み込んでください。");

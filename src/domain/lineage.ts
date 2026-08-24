@@ -99,9 +99,11 @@ export function markLocal(raw: JsonObject): JsonObject {
 }
 
 export function markImported(raw: JsonObject, packageId: string, packageVersion: number): JsonObject {
+  const currentMeta = isObject(raw[WORKBENCH_META_KEY]) ? raw[WORKBENCH_META_KEY] : {};
+  const origin = currentMeta.origin === "default" ? "default" : "imported";
   raw[WORKBENCH_META_KEY] = {
-    ...(isObject(raw[WORKBENCH_META_KEY]) ? raw[WORKBENCH_META_KEY] : {}),
-    origin: "imported",
+    ...currentMeta,
+    origin,
     package_id: packageId,
     package_version: packageVersion,
   };
