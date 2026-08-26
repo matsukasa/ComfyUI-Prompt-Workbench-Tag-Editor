@@ -1,5 +1,5 @@
 import { serializeCatalog } from "./catalog";
-import { addImportHistory, getWorkbenchMeta, itemOrigin, markImported, writeWorkbenchMeta } from "./lineage";
+import { addImportHistory, getWorkbenchMeta, itemOrigin, markDefault, markImported, writeWorkbenchMeta } from "./lineage";
 import { serializeTagSetDocument } from "./tagSets";
 import type {
   CatalogDocument,
@@ -875,6 +875,7 @@ function applyTagSetCategoryOperation(
   operation: PatchOperation,
   manifest?: SharePackageManifest,
   deletedCategories = new Set<string>(),
+  importAsDefault = false,
 ): void {
   if (operation.type === "delete_tagset_category") {
     return;
@@ -883,6 +884,7 @@ function applyTagSetCategoryOperation(
   const payload = tagSetCategoryPayload(operation);
   if (deletedCategories.has(`${payload.level}:${payload.id}`)) return;
   if (manifest) markImported(payload.raw, manifest.package_id, manifest.package_version);
+  else if (importAsDefault) markDefault(payload.raw);
   const maps = rebuildTagSetCategoryMaps(document);
   if (payload.level === "major") {
     const existing = maps.majors.get(payload.id);
@@ -936,6 +938,7 @@ export function applyCatalogPatch(
   document: CatalogDocument,
   patch: SharePatch,
   manifest?: SharePackageManifest,
+  options: { importAsDefault?: boolean } = {},
 ): CatalogDocument {
   let next = clone(document);
   const meta = getWorkbenchMeta(next.original);
@@ -964,6 +967,7 @@ export function applyCatalogPatch(
       if (!item.id) throw new Error(`${operation.type} のカテゴリIDが空です。`);
       if (deletedCategories.has(item.id)) continue;
       if (manifest) item.raw = markImported(item.raw, manifest.package_id, manifest.package_version);
+      else if (options.importAsDefault) item.raw = markDefault(item.raw);
       const index = next.categories.findIndex((existing) => existing.id === item.id);
       if (index >= 0) next.categories[index] = item;
       else next.categories.push(item);
@@ -991,6 +995,7 @@ export function applyCatalogPatch(
       const identity = tagIdentity(item);
       if (deletedTags.has(identity)) continue;
       if (manifest) item.raw = markImported(item.raw, manifest.package_id, manifest.package_version);
+      else if (options.importAsDefault) item.raw = markDefault(item.raw);
       const index = next.tags.findIndex((existing) => tagIdentity(existing) === identity);
       if (index >= 0) next.tags[index] = item;
       else next.tags.push(item);
@@ -1020,6 +1025,7 @@ function applyTagSetPatchWithCategories(
   document: TagSetDocument,
   patch: SharePatch,
   manifest?: SharePackageManifest,
+  options: { importAsDefault?: boolean } = {},
 ): TagSetDocument {
   const next = clone(document);
   const meta = getWorkbenchMeta(next.original);
@@ -1027,7 +1033,7 @@ function applyTagSetPatchWithCategories(
   const deletedCategories = new Set(meta.deletedDefaultTagSetCategoryIds);
   for (const operation of patch.operations) {
     if (operation.target_type === "tagset_category") {
-      applyTagSetCategoryOperation(next, operation, manifest, deletedCategories);
+      applyTagSetCategoryOperation(next, operation, manifest, deletedCategories, options.importAsDefault);
       continue;
     }
     if (operation.type === "add_tagset" || operation.type === "update_tagset") {
@@ -1051,6 +1057,7 @@ function applyTagSetPatchWithCategories(
       if (!item.id) throw new Error(`${operation.type} のタグセットIDが空です。`);
       if (deletedSets.has(item.id)) continue;
       if (manifest) item.raw = markImported(item.raw, manifest.package_id, manifest.package_version);
+      else if (options.importAsDefault) item.raw = markDefault(item.raw);
       for (const small of smalls.values()) small.sets = small.sets.filter((existing) => existing.id !== item.id);
       target.sets.splice(Math.max(0, Math.min(typeof set.order === "number" ? set.order : target.sets.length, target.sets.length)), 0, item);
     } else if (operation.type === "delete_tagset") continue;
@@ -1240,6 +1247,7 @@ export function previewImport(options: {
   tagSetDocument?: TagSetDocument | null;
   selection?: ImportSelection;
   conflictResolution?: ConflictResolution;
+  importAsDefault?: boolean;
 }): ImportPreview {
   const issues: string[] = [];
   const conflicts: string[] = [];
@@ -1258,7 +1266,12 @@ export function previewImport(options: {
         options.conflictResolution === "skip"
           ? withoutCatalogConflicts(options.catalogDocument, options.pkg.catalogPatch)
           : options.pkg.catalogPatch;
-      nextCatalog = applyCatalogPatch(options.catalogDocument, patch, options.pkg.manifest);
+      nextCatalog = applyCatalogPatch(
+        options.catalogDocument,
+        patch,
+        options.importAsDefault ? undefined : options.pkg.manifest,
+        { importAsDefault: options.importAsDefault },
+      );
       summary = addSummary(summary, {
         movedTags: patch.operations.filter((item) => item.type === "update_tag").length,
         addedTags: patch.operations.filter((item) => item.type === "add_tag").length,
@@ -1277,7 +1290,12 @@ export function previewImport(options: {
         options.conflictResolution === "skip"
           ? withoutTagSetConflicts(options.tagSetDocument, options.pkg.tagsetPatch)
           : options.pkg.tagsetPatch;
-      nextTagSets = applyTagSetPatchWithCategories(options.tagSetDocument, patch, options.pkg.manifest);
+      nextTagSets = applyTagSetPatchWithCategories(
+        options.tagSetDocument,
+        patch,
+        options.importAsDefault ? undefined : options.pkg.manifest,
+        { importAsDefault: options.importAsDefault },
+      );
       summary = addSummary(summary, {
         movedTags: patch.operations.filter((item) => item.type === "update_tagset").length,
         addedTags: patch.operations.filter((item) => item.type === "add_tagset").length,

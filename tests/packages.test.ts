@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseCatalogText } from "../src/domain/catalog.ts";
-import { itemOrigin, markLocal } from "../src/domain/lineage.ts";
+import { getWorkbenchMeta, itemOrigin, markLocal } from "../src/domain/lineage.ts";
 import { deleteTags } from "../src/domain/operations.ts";
 import { createSharePackage, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
 import { parseTagSetText } from "../src/domain/tagSets.ts";
@@ -603,6 +603,113 @@ test("tag set import preserves only explicit default origin while recording pack
   assert.equal(itemOrigin(importedSets.get("set-invalid")!.raw), "imported");
   assert.equal(importedSets.get("set-default")!.raw.prompt_workbench_meta?.package_id, "pkg-origin");
   assert.equal(importedSets.get("set-default")!.raw.prompt_workbench_meta?.package_version, 7);
+});
+
+test("developer import mode treats catalog payloads as default without import history", () => {
+  const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
+  const pkg = parsePackageZip(packageToZip({
+    manifest: {
+      format_version: 1,
+      package_id: "pkg-catalog-dev-default",
+      package_name: "CatalogDevDefault",
+      package_version: 1,
+      contains: { catalog: true, tagsets: false },
+      created_at: "2026-08-25T00:00:00.000Z",
+    },
+    catalogPatch: {
+      operations: [
+        {
+          type: "add_tag",
+          target_type: "tag",
+          target_id: "D",
+          tag: {
+            uid: "tag:small:D",
+            sourceId: "D",
+            categoryId: "small",
+            prompt: "d",
+            translationJa: "",
+            aliases: [],
+            order: 3,
+            raw: {
+              id: "D",
+              name: "d",
+              prompt_workbench_meta: { origin: "imported", package_id: "old", package_version: 99 },
+            },
+          },
+        },
+      ],
+    },
+    imageAssets: [],
+    changesCsv: "",
+  }));
+  const preview = previewImport({
+    pkg,
+    catalogDocument: baseline,
+    selection: { catalog: true, tagsets: false },
+    importAsDefault: true,
+  });
+  const imported = preview.nextCatalog!.tags.find((item) => item.prompt === "d")!;
+
+  assert.equal(itemOrigin(imported.raw), "default");
+  assert.equal(imported.raw.prompt_workbench_meta?.package_id, undefined);
+  assert.deepEqual(getWorkbenchMeta(preview.nextCatalog!.original).imports, {});
+});
+
+test("developer import mode treats tag set payloads as default without import history", () => {
+  const baseline = parseTagSetText(tagSetSource, "tag_sets.json");
+  const pkg = parsePackageZip(packageToZip({
+    manifest: {
+      format_version: 1,
+      package_id: "pkg-tagset-dev-default",
+      package_name: "TagSetDevDefault",
+      package_version: 1,
+      contains: { catalog: false, tagsets: true },
+      created_at: "2026-08-25T00:00:00.000Z",
+    },
+    tagsetPatch: {
+      operations: [
+        {
+          type: "add_tagset",
+          target_type: "tagset",
+          target_id: "set-dev-default",
+          tagset: {
+            id: "set-dev-default",
+            smallId: "ts-small",
+            order: 1,
+            name: "set-dev-default",
+            nameJa: "set-dev-default",
+            nameEn: "",
+            creator: "",
+            sourceUrl: "",
+            imageUrl: "",
+            imagePath: "",
+            tags: ["dev"],
+            raw: {
+              id: "set-dev-default",
+              name: "set-dev-default",
+              tags: ["dev"],
+              prompt_workbench_meta: { origin: "local", package_id: "old", package_version: 99 },
+            },
+          },
+        },
+      ],
+    },
+    imageAssets: [],
+    changesCsv: "",
+  }));
+  const preview = previewImport({
+    pkg,
+    tagSetDocument: baseline,
+    selection: { catalog: false, tagsets: true },
+    importAsDefault: true,
+  });
+  const imported = preview.nextTagSets!.majorCategories[0].mediumCategories[0].smallCategories[0].sets.find(
+    (item) => item.id === "set-dev-default",
+  )!;
+
+  assert.equal(itemOrigin(imported.raw), "default");
+  assert.equal(imported.raw.prompt_workbench_meta?.package_id, undefined);
+  assert.deepEqual(getWorkbenchMeta(preview.nextTagSets!.original).imports, {});
 });
 
 test("tag set import conflicts show category path instead of internal ids", () => {

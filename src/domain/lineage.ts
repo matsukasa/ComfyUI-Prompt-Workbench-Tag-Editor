@@ -110,6 +110,18 @@ export function markImported(raw: JsonObject, packageId: string, packageVersion:
   return raw;
 }
 
+export function markDefault(raw: JsonObject): JsonObject {
+  const currentMeta = isObject(raw[WORKBENCH_META_KEY]) ? { ...raw[WORKBENCH_META_KEY] } : {};
+  delete currentMeta.origin;
+  delete currentMeta.package_id;
+  delete currentMeta.package_version;
+  delete currentMeta.packageId;
+  delete currentMeta.packageVersion;
+  if (Object.keys(currentMeta).length) raw[WORKBENCH_META_KEY] = currentMeta;
+  else delete raw[WORKBENCH_META_KEY];
+  return raw;
+}
+
 export function addImportHistory(root: JsonObject, entry: ImportHistoryEntry): void {
   const meta = getWorkbenchMeta(root);
   meta.imports[`${entry.packageId}@${entry.packageVersion}`] = entry;

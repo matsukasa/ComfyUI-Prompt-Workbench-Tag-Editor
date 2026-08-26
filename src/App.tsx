@@ -39,7 +39,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   createDragSoundController,
@@ -1246,9 +1246,17 @@ export function App() {
     pkg: ImportPreview["pkg"],
     selection: ImportSelection,
     conflictResolution: ConflictResolution = packageConflictResolution,
+    importAsDefault = false,
   ): ImportPreview => {
-    const preview = previewImport({ pkg, catalogDocument: document, tagSetDocument, selection, conflictResolution });
-    const duplicateIssue = hasImportedPackage(pkg)
+    const preview = previewImport({
+      pkg,
+      catalogDocument: document,
+      tagSetDocument,
+      selection,
+      conflictResolution,
+      importAsDefault,
+    });
+    const duplicateIssue = !importAsDefault && hasImportedPackage(pkg)
       ? [`このZIPはすでに取り込み済みです。もう一度取り込む必要はありません。${pkg.manifest.package_name} v${pkg.manifest.package_version}`]
       : [];
     const selectionIssue =
@@ -1294,11 +1302,15 @@ export function App() {
       window.setTimeout(() => setPackageProgress(null), 500);
     }
   };
-  const applyPackageImport = async () => {
+  const applyPackageImport = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const importAsDefault = event.shiftKey;
+    if (!packagePreview || (packagePreview.conflicts.length && packageConflictResolution === "stop")) return;
+    const effectivePreview = importAsDefault
+      ? buildImportPreview(packagePreview.pkg, packageImportSelection, packageConflictResolution, true)
+      : packagePreview;
     if (
-      !packagePreview ||
-      packagePreview.issues.length ||
-      (packagePreview.conflicts.length && packageConflictResolution === "stop")
+      effectivePreview.issues.length ||
+      (effectivePreview.conflicts.length && packageConflictResolution === "stop")
     )
       return;
     if (!window.confirm("Importを適用します。現在のファイルは未保存の編集状態になり、保存するまで元ファイルは上書きされません。続行しますか？")) return;
@@ -1312,19 +1324,19 @@ export function App() {
       const backupFiles: Record<string, string> = {};
       if (previousCatalog) backupFiles["tag_catalog.before_import.json"] = serializeCatalog(previousCatalog);
       if (previousTagSets) backupFiles["tag_sets.before_import.json"] = serializeTagSetDocument(previousTagSets);
-      backupFiles["import_manifest.json"] = `${JSON.stringify(packagePreview.pkg.manifest, null, 2)}\n`;
+      backupFiles["import_manifest.json"] = `${JSON.stringify(effectivePreview.pkg.manifest, null, 2)}\n`;
       downloadBytesFile(importBackupFileName(), createZip(backupFiles), "application/zip");
       phase = "タグカタログを適用しています";
       setPackageProgress({ phase, current: 2, total: 5 });
       await waitForPaint();
-      if (packagePreview.nextCatalog) store.replaceDocument(packagePreview.nextCatalog);
+      if (effectivePreview.nextCatalog) store.replaceDocument(effectivePreview.nextCatalog);
       phase = "画像アセットを復元しています";
       setPackageProgress({ phase, current: 3, total: 6 });
       await waitForPaint();
       const restoredImagePaths = new Map<string, string>();
       const failedImageIds = new Set<string>();
       if (packageImportSelection.tagsets) {
-        for (const asset of packagePreview.pkg.imageAssets ?? []) {
+        for (const asset of effectivePreview.pkg.imageAssets ?? []) {
           try {
             const saved = await saveImportedImageAsset(asset, promptWorkbenchDataDir);
             restoredImagePaths.set(saved.tagSetId, saved.path);
@@ -1336,20 +1348,20 @@ export function App() {
       phase = "タグセットを適用しています";
       setPackageProgress({ phase, current: 3, total: 5 });
       await waitForPaint();
-      if (packagePreview.nextTagSets) {
+      if (effectivePreview.nextTagSets) {
         editTagSetDocument(
-          applyImportedImageResults(packagePreview.nextTagSets, restoredImagePaths, failedImageIds, tagSetImageSnapshot(previousTagSets)),
+          applyImportedImageResults(effectivePreview.nextTagSets, restoredImagePaths, failedImageIds, tagSetImageSnapshot(previousTagSets)),
         );
       }
       phase = "Import履歴を記録しています";
       setPackageProgress({ phase, current: 4, total: 5 });
       await waitForPaint();
-      rememberImportedPackage(packagePreview.pkg);
+      if (!importAsDefault) rememberImportedPackage(effectivePreview.pkg);
       setPackageProgress({ phase: "完了しました", current: 5, total: 5 });
       setToast({
         message: "Importを適用しました",
-        detail: `${packagePreview.pkg.manifest.package_name} v${packagePreview.pkg.manifest.package_version} / 追加 ${packagePreview.summary.addedTags}件 / 更新・移動 ${
-          packagePreview.summary.movedTags + packagePreview.summary.renamedTags + packagePreview.summary.changedCategories
+        detail: `${effectivePreview.pkg.manifest.package_name} v${effectivePreview.pkg.manifest.package_version} / 追加 ${effectivePreview.summary.addedTags}件 / 更新・移動 ${
+          effectivePreview.summary.movedTags + effectivePreview.summary.renamedTags + effectivePreview.summary.changedCategories
         }件 / 画像 ${restoredImagePaths.size}件 / 画像スキップ ${failedImageIds.size}件`,
         undoable: true,
       });
