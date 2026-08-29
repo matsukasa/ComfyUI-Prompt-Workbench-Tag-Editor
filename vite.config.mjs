@@ -103,7 +103,7 @@ async function resolveBlueskyHandle(handle) {
   return body.did;
 }
 
-async function blueskyImageResponse(sourceUrl) {
+async function blueskyImageResponse(sourceUrl, imageIndex = 0) {
   const post = blueskyPostParts(sourceUrl);
   if (!post) return null;
   const repo = await resolveBlueskyHandle(post.handle);
@@ -114,9 +114,10 @@ async function blueskyImageResponse(sourceUrl) {
   const recordResponse = await fetch(recordUrl);
   if (!recordResponse.ok) throw new Error(`Bluesky post lookup failed: HTTP ${recordResponse.status}`);
   const record = await recordResponse.json();
-  const image = record?.value?.embed?.images?.[0]?.image;
+  const images = Array.isArray(record?.value?.embed?.images) ? record.value.embed.images : [];
+  const image = images[imageIndex]?.image;
   const cid = image?.ref?.["$link"];
-  if (!cid) throw new Error("Bluesky post image was not found");
+  if (!cid) throw new Error(`Bluesky post image ${imageIndex + 1} was not found; ${images.length} image(s) available`);
   const extension = image?.mimeType === "image/png" ? "png" : "jpeg";
   const imageUrl = `https://cdn.bsky.app/img/feed_fullsize/plain/${repo}/${cid}@${extension}`;
   const imageResponse = await fetch(imageUrl);
@@ -269,7 +270,8 @@ function promptWorkbenchDataPlugin() {
       next();
       return;
     }
-    blueskyImageResponse(parsedUrl.searchParams.get("url") ?? "")
+    const imageIndex = Math.max(0, Number.parseInt(parsedUrl.searchParams.get("image") ?? "1", 10) - 1 || 0);
+    blueskyImageResponse(parsedUrl.searchParams.get("url") ?? "", imageIndex)
       .then(async (imageResponse) => {
         if (!imageResponse) {
           response.statusCode = 404;

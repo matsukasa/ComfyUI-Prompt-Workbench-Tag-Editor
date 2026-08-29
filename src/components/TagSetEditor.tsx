@@ -111,9 +111,11 @@ interface SetRowProps {
   index: number;
   selection: SetSelection;
   selected: boolean;
+  checked: boolean;
   favorite: boolean;
   imageSrc: string;
   onSelect: () => void;
+  onToggleChecked: () => void;
   onFavoriteMenu: (setItem: TagSetItem, point: { x: number; y: number }) => void;
   onDelete: () => void;
 }
@@ -187,6 +189,7 @@ function blobFromCanvas(canvas: HTMLCanvasElement, type: string, quality?: numbe
 
 const TAG_SET_IMAGE_MAX_SIDE = 768;
 const TAG_SET_IMAGE_WEBP_QUALITY = 0.56;
+const SOURCE_IMAGE_INDEX_OPTIONS = Array.from({ length: 10 }, (_, index) => index);
 export const PROMPT_WORKBENCH_DATA_DIR_KEY = "prompt-workbench:tag-set-image-data-dir";
 
 export function readPromptWorkbenchDataDir(): string {
@@ -222,7 +225,7 @@ async function compressedImageBlob(source: Blob): Promise<Blob> {
   }
 }
 
-function extractPreviewImageUrl(pageSource: string, pageUrl: string): string {
+function extractPreviewImageUrl(pageSource: string, pageUrl: string, imageIndex = 0): string {
   const document = new DOMParser().parseFromString(pageSource, "text/html");
   const selectors = [
     'meta[property="og:image"]',
@@ -230,11 +233,15 @@ function extractPreviewImageUrl(pageSource: string, pageUrl: string): string {
     'meta[property="twitter:image"]',
     "img",
   ];
+  const candidates: string[] = [];
   for (const selector of selectors) {
-    const element = document.querySelector(selector);
-    const value = element instanceof HTMLMetaElement ? element.content : element?.getAttribute("src");
-    if (value) return new URL(value, pageUrl).toString();
+    for (const element of document.querySelectorAll(selector)) {
+      const value = element instanceof HTMLMetaElement ? element.content : element.getAttribute("src");
+      if (value) candidates.push(new URL(value, pageUrl).toString());
+    }
   }
+  if (candidates[imageIndex]) return candidates[imageIndex];
+  if (candidates.length) throw new Error(`指定した画像番号が見つかりませんでした。ページ内の候補は ${candidates.length} 件です。`);
   throw new Error("ページ内に画像が見つかりませんでした。");
 }
 
@@ -251,7 +258,7 @@ function parseBlueskyPostUrl(sourceUrl: string): { handle: string; rkey: string 
   return { handle: decodeURIComponent(match[1]), rkey: decodeURIComponent(match[2]) };
 }
 
-async function blueskyPostImageUrl(sourceUrl: string): Promise<string | null> {
+async function blueskyPostImageUrl(sourceUrl: string, imageIndex = 0): Promise<string | null> {
   const post = parseBlueskyPostUrl(sourceUrl);
   if (!post) return null;
   const repo = post.handle.startsWith("did:") ? post.handle : await resolveBlueskyHandle(post.handle);
@@ -262,17 +269,20 @@ async function blueskyPostImageUrl(sourceUrl: string): Promise<string | null> {
   const response = await fetch(recordUrl);
   if (!response.ok) throw new Error(`Bluesky投稿を取得できませんでした: HTTP ${response.status}`);
   const body = await response.json();
-  const image = body?.value?.embed?.images?.[0]?.image;
+  const images = Array.isArray(body?.value?.embed?.images) ? body.value.embed.images : [];
+  const image = images[imageIndex]?.image;
+  if (!image && images.length) throw new Error(`指定した画像番号が見つかりませんでした。Bluesky投稿内の候補は ${images.length} 件です。`);
   const cid = image?.ref?.["$link"];
   if (!cid) throw new Error("Bluesky投稿に画像が見つかりませんでした。");
   const extension = image?.mimeType === "image/png" ? "png" : "jpeg";
   return `https://cdn.bsky.app/img/feed_fullsize/plain/${repo}/${cid}@${extension}`;
 }
 
-function blueskySourceImageProxyUrl(sourceUrl: string): string | null {
+function blueskySourceImageProxyUrl(sourceUrl: string, imageIndex = 0): string | null {
   if (!parseBlueskyPostUrl(sourceUrl)) return null;
   const url = new URL("/prompt-workbench-data/source-image", window.location.href);
   url.searchParams.set("url", sourceUrl);
+  url.searchParams.set("image", String(imageIndex + 1));
   return url.toString();
 }
 
@@ -396,6 +406,36 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number): void {
   if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
   const [item] = items.splice(fromIndex, 1);
   items.splice(Math.min(toIndex, items.length), 0, item);
+}
+
+function tagSetIdFromDragId(id: unknown, prefix: string): string {
+  return typeof id === "string" && id.startsWith(prefix) ? id.slice(prefix.length) : "";
+}
+
+function moveSetsToSmall(
+  document: TagSetDocument,
+  setIds: Set<string>,
+  targetSelection: SmallSelection,
+  beforeSetId = "",
+): number {
+  const target = resolveSmall(document, targetSelection);
+  if (!target) return 0;
+  const movedSets: TagSetItem[] = [];
+  for (const major of document.majorCategories) {
+    for (const medium of major.mediumCategories) {
+      for (const small of medium.smallCategories) {
+        small.sets = small.sets.filter((setItem) => {
+          if (!setIds.has(setItem.id)) return true;
+          movedSets.push(setItem);
+          return false;
+        });
+      }
+    }
+  }
+  const requestedIndex = beforeSetId ? target.sets.findIndex((setItem) => setItem.id === beforeSetId) : -1;
+  const insertIndex = requestedIndex >= 0 ? requestedIndex : target.sets.length;
+  target.sets.splice(insertIndex, 0, ...movedSets);
+  return movedSets.length;
 }
 
 function tagSetCategoryKey(level: TagSetCategoryLevel, data: Partial<SmallSelection>): string {
@@ -525,9 +565,11 @@ function TagSetSetRow({
   setItem,
   selection,
   selected,
+  checked,
   favorite,
   imageSrc,
   onSelect,
+  onToggleChecked,
   onFavoriteMenu,
   onDelete,
 }: SetRowProps) {
@@ -544,7 +586,7 @@ function TagSetSetRow({
   return (
     <div
       ref={setNodeRef}
-      className={`tag-set-list-row ${selected ? "is-selected" : ""} ${favorite ? "is-favorite" : ""} ${droppable.isOver ? "is-drop-target" : ""}`}
+      className={`tag-set-list-row ${selected ? "is-selected" : ""} ${checked ? "is-checked" : ""} ${favorite ? "is-favorite" : ""} ${droppable.isOver ? "is-drop-target" : ""}`}
       role="button"
       tabIndex={0}
       style={{ transform: CSS.Translate.toString(draggable.transform) }}
@@ -567,6 +609,18 @@ function TagSetSetRow({
         }
       }}
     >
+      <button
+        className={`select-box tag-set-check ${checked ? "checked" : ""}`}
+        type="button"
+        aria-label={`${setItem.nameJa || setItem.name || setItem.id}を選択`}
+        aria-pressed={checked}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleChecked();
+        }}
+      >
+        {checked && <Check />}
+      </button>
       <span className="tag-set-drag-handle" {...draggable.listeners} {...draggable.attributes} aria-label={`${setItem.name}をドラッグ`}>
         <GripVertical />
       </span>
@@ -634,11 +688,13 @@ export function TagSetEditor({
     const first = firstSmallSelection(document);
     return resolveSmall(document, first)?.sets.length ? { ...first, setIndex: 0 } : null;
   });
+  const [checkedSetIds, setCheckedSetIds] = useState<string[]>([]);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const imagePreviewUrlsRef = useRef<Record<string, string>>({});
   const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
   const [imageStatus, setImageStatus] = useState("");
   const [imageDragActive, setImageDragActive] = useState(false);
+  const [sourceImageIndex, setSourceImageIndex] = useState(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const selectedSmall = resolveSmall(document, smallSelection) ?? resolveSmall(document, firstSmallSelection(document));
@@ -646,6 +702,7 @@ export function TagSetEditor({
   const selectedMedium = resolveMedium(document, smallSelection);
   const selectedSet = resolveSet(document, setSelection);
   const selectedSetKey = selectedSet?.id ?? null;
+  const checkedSetIdSet = useMemo(() => new Set(checkedSetIds), [checkedSetIds]);
   const [tagDraft, setTagDraft] = useState(() => editableTagSetTags(selectedSet?.tags ?? []));
   const categoryNeedle = normalize(categoryQuery);
   const setNeedle = normalize(setQuery);
@@ -691,6 +748,9 @@ export function TagSetEditor({
         );
       });
   }, [document, favoriteTagSetKeys, selectedSmall, setNeedle, showFavoritesOnly, smallSelection]);
+  const visibleSetIds = useMemo(() => filteredSets.map(({ setItem }) => setItem.id), [filteredSets]);
+  const allVisibleSetsChecked =
+    visibleSetIds.length > 0 && visibleSetIds.every((id) => checkedSetIdSet.has(id));
 
   const update = (recipe: (draft: TagSetDocument) => void) => {
     const draft = structuredClone(document);
@@ -702,6 +762,10 @@ export function TagSetEditor({
     setTagDraft(editableTagSetTags(selectedSet?.tags ?? []));
     setImageStatus("");
   }, [selectedSetKey]);
+
+  useEffect(() => {
+    setCheckedSetIds((current) => current.filter((id) => Boolean(findSetSelectionById(document, id))));
+  }, [document]);
 
   useEffect(
     () => () => {
@@ -946,6 +1010,42 @@ export function TagSetEditor({
       dragSounds.cancel();
       return;
     }
+    const activeSetId = tagSetIdFromDragId(event.active.id, "tag-set-set:");
+    const overSetId = tagSetIdFromDragId(event.over?.id, "tag-set-set-target:");
+    const draggedCheckedSetIds =
+      active.type === "tag-set-set" && checkedSetIdSet.has(activeSetId) ? checkedSetIds : [];
+    if (
+      active.type === "tag-set-set" &&
+      draggedCheckedSetIds.length > 1 &&
+      (over.type === "tag-set-set-target" || (over.type === "tag-set-category-target" && over.level === "small"))
+    ) {
+      if (over.type === "tag-set-set-target" && checkedSetIdSet.has(overSetId)) {
+        dragSounds.cancel();
+        return;
+      }
+      let movedCount = 0;
+      const selectedSetWillMove = selectedSetKey ? checkedSetIdSet.has(selectedSetKey) : false;
+      const targetSelection = {
+        majorIndex: over.majorIndex,
+        mediumIndex: over.mediumIndex,
+        smallIndex: over.smallIndex,
+      };
+      update((draft) => {
+        movedCount = moveSetsToSmall(draft, new Set(draggedCheckedSetIds), targetSelection, overSetId);
+      });
+      if (movedCount > 0) {
+        if (selectedSetWillMove) setSetSelection(null);
+        setCheckedSetIds([]);
+        setExpandedCategoryKeys((current) => new Set([
+          ...current,
+          tagSetCategoryKey("major", targetSelection),
+          tagSetCategoryKey("medium", targetSelection),
+        ]));
+      }
+      successful = movedCount > 0;
+      dragSounds.finish(successful, soundEnabled);
+      return;
+    }
     if (active.type === "tag-set-set" && over.type === "tag-set-set-target") {
       let nextSetSelection: SetSelection | null = null;
       let movedSetId: string | undefined;
@@ -1087,6 +1187,19 @@ export function TagSetEditor({
     dragSounds.finish(successful, soundEnabled);
   };
 
+  const toggleCheckedSet = (id: string) => {
+    setCheckedSetIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+
+  const toggleVisibleSetsChecked = () => {
+    if (!visibleSetIds.length) return;
+    const visibleIds = new Set(visibleSetIds);
+    setCheckedSetIds((current) => {
+      if (visibleSetIds.every((id) => current.includes(id))) return current.filter((id) => !visibleIds.has(id));
+      return [...new Set([...current, ...visibleSetIds])];
+    });
+  };
+
   const selectSmall = (next: SmallSelection) => {
     setSmallSelection(next);
     const small = resolveSmall(document, next);
@@ -1166,12 +1279,12 @@ export function TagSetEditor({
     }
     setImageStatus("画像を探しています…");
     try {
-      const imageUrl = await blueskyPostImageUrl(selectedSet.sourceUrl).catch(() => null);
-      let sourceImageUrl = blueskySourceImageProxyUrl(selectedSet.sourceUrl) ?? imageUrl;
+      const imageUrl = await blueskyPostImageUrl(selectedSet.sourceUrl, sourceImageIndex).catch(() => null);
+      let sourceImageUrl = blueskySourceImageProxyUrl(selectedSet.sourceUrl, sourceImageIndex) ?? imageUrl;
       if (!sourceImageUrl) {
         const pageResponse = await fetch(selectedSet.sourceUrl);
         if (!pageResponse.ok) throw new Error(`ページを取得できませんでした: HTTP ${pageResponse.status}`);
-        sourceImageUrl = extractPreviewImageUrl(await pageResponse.text(), selectedSet.sourceUrl);
+        sourceImageUrl = extractPreviewImageUrl(await pageResponse.text(), selectedSet.sourceUrl, sourceImageIndex);
       }
       const imageResponse = await fetch(sourceImageUrl);
       if (!imageResponse.ok) throw new Error(`画像を取得できませんでした: HTTP ${imageResponse.status}`);
@@ -1516,10 +1629,16 @@ export function TagSetEditor({
                 {[selectedMajor?.labelJa, selectedMedium?.labelJa].filter(Boolean).join(" > ") || "分類未選択"}
               </span>
             </div>
-            <button type="button" onClick={addSet} disabled={!selectedSmall}>
-              <Plus />
-              セット追加
-            </button>
+            <span className="tag-set-list-actions">
+              <button type="button" onClick={toggleVisibleSetsChecked} disabled={!visibleSetIds.length}>
+                <Check />
+                {allVisibleSetsChecked ? "選択解除" : "すべて選択"}
+              </button>
+              <button type="button" onClick={addSet} disabled={!selectedSmall}>
+                <Plus />
+                セット追加
+              </button>
+            </span>
           </div>
         </div>
         <div className="tag-set-list">
@@ -1536,6 +1655,7 @@ export function TagSetEditor({
                   index={selection.setIndex}
                   selection={selection}
                   selected={Boolean(selected)}
+                  checked={checkedSetIdSet.has(setItem.id)}
                   favorite={favoriteTagSetKeys.has(favoriteTagSetKey(setItem.id))}
                   imageSrc={imagePreviewUrls[setItem.id] || savedTagSetImageUrl(setItem.imagePath, promptWorkbenchDataDir) || setItem.imageUrl}
                   onSelect={() => {
@@ -1546,6 +1666,7 @@ export function TagSetEditor({
                     });
                     setSetSelection(selection);
                   }}
+                  onToggleChecked={() => toggleCheckedSet(setItem.id)}
                   onFavoriteMenu={(targetSet, point) => {
                     setFavoriteMenu({
                       setId: targetSet.id,
@@ -1691,6 +1812,20 @@ export function TagSetEditor({
                 <div className="tag-set-image-empty">画像なし</div>
               )}
               <div className="tag-set-image-actions">
+                <label className="tag-set-image-source-select">
+                  <span>画像</span>
+                  <select
+                    value={sourceImageIndex}
+                    onChange={(event) => setSourceImageIndex(Number(event.target.value))}
+                    disabled={!selectedSet.sourceUrl}
+                  >
+                    {SOURCE_IMAGE_INDEX_OPTIONS.map((index) => (
+                      <option key={index} value={index}>
+                        {index + 1}枚目
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button type="button" onClick={() => void fetchImageFromSourcePage()} disabled={!selectedSet.sourceUrl}>
                   ページから画像取得
                 </button>

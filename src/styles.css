@@ -1902,7 +1902,6 @@ button:disabled {
 .tag-set-list-head-row button {
   flex: 0 0 auto;
 }
-
 .tag-set-panel-head strong {
   font-size: 14px;
 }
@@ -2067,6 +2066,10 @@ button:disabled {
   background: color-mix(in oklch, var(--accent) 14%, var(--surface-1));
   color: var(--ink);
 }
+.tag-set-list-row.is-checked:not(.is-selected) {
+  border-color: color-mix(in oklch, var(--accent) 48%, var(--line));
+  background: color-mix(in oklch, var(--accent) 9%, var(--surface-0));
+}
 
 .tag-set-tree-row strong,
 .tag-set-list-row strong {
@@ -2150,7 +2153,7 @@ button:disabled {
 
 .tag-set-list-row {
   display: grid;
-  grid-template-columns: 20px 48px minmax(0, 1fr) auto;
+  grid-template-columns: 20px 20px 48px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   height: max(84px, var(--tag-set-row-height, 84px));
@@ -2162,6 +2165,9 @@ button:disabled {
   color: var(--ink);
   text-align: left;
   overflow: visible;
+}
+.tag-set-check {
+  align-self: center;
 }
 
 .tag-set-list-thumb {
@@ -2329,6 +2335,26 @@ button:disabled {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.tag-set-image-source-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tag-set-image-source-select select {
+  min-width: 92px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  padding: 0 28px 0 10px;
 }
 
 .tag-set-image-head small,
