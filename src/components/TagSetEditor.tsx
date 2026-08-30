@@ -51,6 +51,7 @@ interface TagSetEditorProps {
   favoriteTagSetKeys: Set<string>;
   showFavoritesOnly: boolean;
   onToggleFavorite: (id: string, name: string) => void;
+  onCheckedSetIdsChange?: (ids: string[]) => void;
 }
 
 interface SmallSelection {
@@ -667,6 +668,7 @@ export function TagSetEditor({
   favoriteTagSetKeys,
   showFavoritesOnly,
   onToggleFavorite,
+  onCheckedSetIdsChange,
 }: TagSetEditorProps) {
   const [categoryQuery, setCategoryQuery] = useState("");
   const [setQuery, setSetQuery] = useState("");
@@ -766,6 +768,10 @@ export function TagSetEditor({
   useEffect(() => {
     setCheckedSetIds((current) => current.filter((id) => Boolean(findSetSelectionById(document, id))));
   }, [document]);
+
+  useEffect(() => {
+    onCheckedSetIdsChange?.(checkedSetIds);
+  }, [checkedSetIds, onCheckedSetIdsChange]);
 
   useEffect(
     () => () => {
@@ -1630,6 +1636,7 @@ export function TagSetEditor({
               </span>
             </div>
             <span className="tag-set-list-actions">
+              <small className="tag-set-export-count">Export対象 {checkedSetIds.length}件</small>
               <button type="button" onClick={toggleVisibleSetsChecked} disabled={!visibleSetIds.length}>
                 <Check />
                 {allVisibleSetsChecked ? "選択解除" : "すべて選択"}

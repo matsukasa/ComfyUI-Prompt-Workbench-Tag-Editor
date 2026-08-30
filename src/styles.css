@@ -871,6 +871,13 @@ button:disabled {
   color: var(--muted);
   font-size: 11px;
 }
+.export-selection-status,
+.tag-set-export-count,
+.package-selection-status {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
 .lane-navigation {
   display: flex;
   align-items: center;
@@ -1602,6 +1609,9 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+.package-selection-status {
+  margin: 0;
 }
 .package-import-preview span {
   color: var(--muted);

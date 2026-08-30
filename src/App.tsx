@@ -91,6 +91,7 @@ import {
   type ImportSelection,
   type ImportPreview,
   type PackageContentType,
+  type PackageExportScope,
   type SharePackageImageAsset,
 } from "./domain/packages";
 import type { CatalogDocument, CategoryNode, TagOccurrence, TagSetDocument, TagSetItem } from "./domain/types";
@@ -492,6 +493,11 @@ function packageContentLabel(value: PackageContentType): string {
   return "両方書き出し";
 }
 
+function packageExportScopeLabel(value: PackageExportScope): string {
+  if (value === "selectedOnly") return "選択した項目";
+  return "自分で作成した差分";
+}
+
 function formatImportDate(value: string): string {
   if (!value) return "日時不明";
   const date = new Date(value);
@@ -625,6 +631,7 @@ export function App() {
   const [packageVersion, setPackageVersion] = useState(1);
   const [packageNote, setPackageNote] = useState("");
   const [packageContentType, setPackageContentType] = useState<PackageContentType>("Full");
+  const [packageExportScope, setPackageExportScope] = useState<PackageExportScope>("localOnly");
   const [packagePreview, setPackagePreview] = useState<ImportPreview | null>(null);
   const [packageImportSelection, setPackageImportSelection] = useState<ImportSelection>({ catalog: true, tagsets: true });
   const [packageConflictResolution, setPackageConflictResolution] = useState<ConflictResolution>("stop");
@@ -647,6 +654,7 @@ export function App() {
   const [tagSetBaselineDocument, setTagSetBaselineDocument] = useState<TagSetDocument | null>(null);
   const [factoryCatalogDocument, setFactoryCatalogDocument] = useState<CatalogDocument | null>(null);
   const [factoryTagSetDocument, setFactoryTagSetDocument] = useState<TagSetDocument | null>(null);
+  const [checkedTagSetIds, setCheckedTagSetIds] = useState<string[]>([]);
   const [tagSetHistory, setTagSetHistory] = useState<TagSetDocument[]>([]);
   const [tagSetFuture, setTagSetFuture] = useState<TagSetDocument[]>([]);
   const [editorMode, setEditorMode] = useState<EditorMode>("tags");
@@ -861,6 +869,10 @@ export function App() {
         };
   const catalogExportBaseline = factoryCatalogDocument ?? baseline;
   const tagSetExportBaseline = factoryTagSetDocument ?? tagSetBaselineDocument;
+  const selectedExportCounts = {
+    catalog: packageContentType === "TagSets" ? 0 : store.selectedTagIds.length,
+    tagsets: packageContentType === "Catalog" ? 0 : checkedTagSetIds.length,
+  };
   const activeFileName = isTagSetMode
     ? (tagSetDocument?.fileName ?? "tag_sets.json")
     : (document?.fileName ?? "catalog.json");
@@ -966,12 +978,14 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
-        exportScope: "localOnly",
+        exportScope: packageExportScope,
+        selectedCatalogTagIds: store.selectedTagIds,
+        selectedTagSetIds: checkedTagSetIds,
       });
     } catch {
       return null;
     }
-  }, [catalogExportBaseline, document, packageContentType, packageDialogMode, packageName, packageNote, packageVersion, tagSetDocument, tagSetExportBaseline]);
+  }, [catalogExportBaseline, checkedTagSetIds, document, packageContentType, packageDialogMode, packageExportScope, packageName, packageNote, packageVersion, store.selectedTagIds, tagSetDocument, tagSetExportBaseline]);
   const importHistory = useMemo<DisplayImportHistoryEntry[]>(() => {
     const entries = new Map<string, DisplayImportHistoryEntry>();
     for (const root of [document?.original, tagSetDocument?.original]) {
@@ -1181,6 +1195,10 @@ export function App() {
     else if (saveMode === "saveAs") void saveAsNewFile();
   };
   const exportPackage = async () => {
+    if (packageExportDisabledReason) {
+      store.setError(packageExportDisabledReason);
+      return;
+    }
     setPackageBusy(true);
     let phase = "差分を確認しています";
     setPackageProgress({ phase, current: 1, total: 6 });
@@ -1202,7 +1220,9 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
-        exportScope: "localOnly",
+        exportScope: packageExportScope,
+        selectedCatalogTagIds: store.selectedTagIds,
+        selectedTagSetIds: checkedTagSetIds,
       });
       if (!pkg.manifest.contains.catalog && !pkg.manifest.contains.tagsets) {
         store.setError("書き出せる差分がありません。タグカタログまたはタグセットを読み込んでください。");
@@ -1397,6 +1417,19 @@ export function App() {
             : packagePreview.conflicts.length > 0 && packageConflictResolution === "stop"
               ? `競合があるため適用できません: ${packagePreview.conflicts[0]}`
               : "";
+  const packageExportOperationCount =
+    (packageExportPreview?.catalogPatch?.operations.length ?? 0) +
+    (packageExportPreview?.tagsetPatch?.operations.length ?? 0);
+  const packageExportDisabledReason =
+    packageDialogMode !== "export"
+      ? ""
+      : packageBusy
+        ? "書き出し中です。"
+        : packageExportScope === "selectedOnly" && selectedExportCounts.catalog + selectedExportCounts.tagsets === 0
+          ? "選択した項目がありません。"
+          : packageExportPreview && packageExportOperationCount === 0
+            ? "書き出せる差分がありません。"
+            : "";
   const packageDialog = packageDialogMode ? (
     <div className="modal-backdrop" role="presentation" onMouseDown={() => setPackageDialogMode(null)}>
       <section
@@ -1473,6 +1506,24 @@ export function App() {
                 </button>
               ))}
             </div>
+            <div className="package-content-options" role="radiogroup" aria-label="Export範囲">
+              {(["localOnly", "selectedOnly"] as PackageExportScope[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={packageExportScope === value ? "is-active" : ""}
+                  onClick={() => setPackageExportScope(value)}
+                  aria-pressed={packageExportScope === value}
+                >
+                  {packageExportScopeLabel(value)}
+                </button>
+              ))}
+            </div>
+            {packageExportScope === "selectedOnly" && (
+              <p className="package-selection-status">
+                Export対象: タグ {selectedExportCounts.catalog}件 / タグセット {selectedExportCounts.tagsets}件
+              </p>
+            )}
             <p className="package-filename">
               {packageFileName(packageName, packageContentType, packageVersion)}
             </p>
@@ -1485,6 +1536,7 @@ export function App() {
               <small>
                 削除操作は共有差分に含めません。changes.csv、manifest.json、patch JSONをZIPへ保存します。
               </small>
+              {packageExportDisabledReason && <small className="validation-error">{packageExportDisabledReason}</small>}
               {packageExportPreview?.manifest.note && <small>メモ: {packageExportPreview.manifest.note}</small>}
             </div>
           </div>
@@ -1625,7 +1677,13 @@ export function App() {
             {packageDialogMode === "import" ? "キャンセル" : "閉じる"}
           </button>
           {packageDialogMode === "export" ? (
-            <button className="primary-button" type="button" disabled={packageBusy} onClick={exportPackage}>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={Boolean(packageExportDisabledReason)}
+              title={packageExportDisabledReason || undefined}
+              onClick={exportPackage}
+            >
               <Download />
               {packageBusy ? "書き出し中..." : "ZIPを書き出す"}
             </button>
@@ -2062,6 +2120,7 @@ export function App() {
             favoriteTagSetKeys={favoriteTagSetKeys}
             showFavoritesOnly={store.showFavoritesOnly}
             onToggleFavorite={toggleTagSetFavorite}
+            onCheckedSetIdsChange={setCheckedTagSetIds}
           />
         ) : (
           <main className="tag-set-editor tag-set-empty-state">
@@ -2385,6 +2444,9 @@ export function App() {
                     </button>
                   )}
                 </div>
+              )}
+              {store.selectedTagIds.length > 0 && (
+                <span className="export-selection-status">Export対象 {store.selectedTagIds.length}件</span>
               )}
               <span className="workspace-status">
                 {document.tags.length.toLocaleString()} タグ / {document.categories.length} カテゴリ

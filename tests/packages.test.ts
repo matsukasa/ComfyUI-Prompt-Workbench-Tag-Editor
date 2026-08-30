@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { parseCatalogText } from "../src/domain/catalog.ts";
 import { getWorkbenchMeta, itemOrigin, markLocal } from "../src/domain/lineage.ts";
@@ -416,6 +418,147 @@ test("share package export defaults to local-only tag set operations and skips i
     "add_tagset_category:small:ts-local-small",
   ]);
   assert.equal(pkg.exportSummary?.excludedTagSets, 5);
+});
+
+test("share package selected-only catalog export includes only selected local tags", () => {
+  const baseline = parseCatalogText(catalogSource, "tag_catalog.json");
+  const exporter = structuredClone(baseline);
+  const selectedTag = exporter.tags.find((tag) => tag.sourceId === "A")!;
+  selectedTag.translationJa = "selected local";
+  selectedTag.raw = markLocal(selectedTag.raw);
+  const unselectedTag = exporter.tags.find((tag) => tag.sourceId === "B")!;
+  unselectedTag.translationJa = "unselected local";
+  unselectedTag.raw = markLocal(unselectedTag.raw);
+
+  const pkg = createSharePackage({
+    packageName: "SelectedCatalog",
+    packageId: "pkg-selected-catalog",
+    packageVersion: 1,
+    includeCatalog: true,
+    includeTagSets: false,
+    catalogBaseline: baseline,
+    catalogDocument: exporter,
+    exportScope: "selectedOnly",
+    selectedCatalogTagIds: [selectedTag.uid],
+  });
+
+  assert.deepEqual(pkg.catalogPatch?.operations.map((operation) => `${operation.type}:${operation.target_id}`), [
+    "update_tag:A",
+  ]);
+});
+
+test("share package selected-only tag set export includes only checked local tag sets", () => {
+  const baseline = parseTagSetText(tagSetSource, "tag_sets.json");
+  const exporter = structuredClone(baseline);
+  const small = exporter.majorCategories[0].mediumCategories[0].smallCategories[0];
+  small.sets.push(
+    {
+      id: "set-local-a",
+      name: "Set Local A",
+      nameJa: "Set Local A",
+      nameEn: "",
+      creator: "",
+      sourceUrl: "",
+      imageUrl: "",
+      imagePath: "",
+      tags: ["local a"],
+      raw: markLocal({ id: "set-local-a", name: "Set Local A", tags: ["local a"] }),
+    },
+    {
+      id: "set-local-b",
+      name: "Set Local B",
+      nameJa: "Set Local B",
+      nameEn: "",
+      creator: "",
+      sourceUrl: "",
+      imageUrl: "",
+      imagePath: "",
+      tags: ["local b"],
+      raw: markLocal({ id: "set-local-b", name: "Set Local B", tags: ["local b"] }),
+    },
+  );
+
+  const pkg = createSharePackage({
+    packageName: "SelectedTagSets",
+    packageId: "pkg-selected-tagsets",
+    packageVersion: 1,
+    includeCatalog: false,
+    includeTagSets: true,
+    tagSetBaseline: baseline,
+    tagSetDocument: exporter,
+    exportScope: "selectedOnly",
+    selectedTagSetIds: ["set-local-b"],
+  });
+
+  assert.deepEqual(pkg.tagsetPatch?.operations.map((operation) => `${operation.type}:${operation.target_id}`), [
+    "add_tagset:set-local-b",
+  ]);
+});
+
+test("share package selected-only full export reflects selected catalog and tag set items", () => {
+  const catalog = parseCatalogText(catalogSource, "tag_catalog.json");
+  const nextCatalog = structuredClone(catalog);
+  const tag = nextCatalog.tags.find((item) => item.sourceId === "A")!;
+  tag.translationJa = "selected catalog tag";
+  tag.raw = markLocal(tag.raw);
+  const tagSets = parseTagSetText(tagSetSource, "tag_sets.json");
+  const nextTagSets = structuredClone(tagSets);
+  const set = nextTagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0];
+  set.tags = ["selected tag set"];
+  set.raw = markLocal(set.raw);
+
+  const pkg = createSharePackage({
+    packageName: "SelectedFull",
+    packageId: "pkg-selected-full",
+    packageVersion: 1,
+    includeCatalog: true,
+    includeTagSets: true,
+    catalogBaseline: catalog,
+    catalogDocument: nextCatalog,
+    tagSetBaseline: tagSets,
+    tagSetDocument: nextTagSets,
+    exportScope: "selectedOnly",
+    selectedCatalogTagIds: [tag.uid],
+    selectedTagSetIds: [set.id],
+  });
+
+  assert.equal(pkg.catalogPatch?.operations.length, 1);
+  assert.equal(pkg.tagsetPatch?.operations.length, 1);
+});
+
+test("share package selected-only export is empty when nothing is selected", () => {
+  const catalog = parseCatalogText(catalogSource, "tag_catalog.json");
+  const nextCatalog = structuredClone(catalog);
+  const tag = nextCatalog.tags.find((item) => item.sourceId === "A")!;
+  tag.translationJa = "unselected";
+  tag.raw = markLocal(tag.raw);
+
+  const pkg = createSharePackage({
+    packageName: "SelectedEmpty",
+    packageId: "pkg-selected-empty",
+    packageVersion: 1,
+    includeCatalog: true,
+    includeTagSets: false,
+    catalogBaseline: catalog,
+    catalogDocument: nextCatalog,
+    exportScope: "selectedOnly",
+  });
+
+  assert.equal(pkg.catalogPatch?.operations.length, 0);
+});
+
+test("export dialog exposes scope choices and selection counts", () => {
+  const appSource = readFileSync(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const tagSetEditorSource = readFileSync(join(process.cwd(), "src", "components", "TagSetEditor.tsx"), "utf8");
+
+  assert.match(appSource, /aria-label="Export範囲"/u);
+  assert.match(appSource, /自分で作成した差分/u);
+  assert.match(appSource, /選択した項目/u);
+  assert.match(appSource, /Export対象: タグ \{selectedExportCounts\.catalog\}件 \/ タグセット \{selectedExportCounts\.tagsets\}件/u);
+  assert.match(appSource, /選択した項目がありません/u);
+  assert.match(appSource, /disabled=\{Boolean\(packageExportDisabledReason\)\}/u);
+  assert.match(appSource, /onCheckedSetIdsChange=\{setCheckedTagSetIds\}/u);
+  assert.match(tagSetEditorSource, /Export対象 \{checkedSetIds\.length\}件/u);
 });
 
 test("share package changes CSV has a Japanese header and UTF-8 BOM", () => {

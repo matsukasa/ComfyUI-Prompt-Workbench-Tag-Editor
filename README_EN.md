@@ -110,6 +110,17 @@ Export targets are:
 - Export tag sets only
 - Export both
 
+Export scope is:
+
+- Locally created changes
+- Selected items
+
+`Selected items` exports only the tags selected in the tag editor and the tag sets checked in the tag set editor.
+When exporting only the tag catalogue, only selected tags are used.
+When exporting only tag sets, only checked tag sets are used.
+When exporting both, both selections are used.
+If no items are selected, the ZIP export is disabled.
+
 The ZIP file name uses this format:
 
 ```text
@@ -124,6 +135,8 @@ The ZIP contains:
 - `changes.csv`
 
 `changes.csv` is for human review and is not used by Import.
+
+The Export preview shows the planned catalogue operation count, tag set operation count, selected export counts, and that delete operations are not included.
 
 ### Import Shared Package
 
