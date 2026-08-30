@@ -49,7 +49,7 @@ import {
 import { CategoryTree } from "./components/CategoryTree";
 import { KanbanLane } from "./components/Kanban";
 import { PreviewDialog } from "./components/PreviewDialog";
-import { readPromptWorkbenchDataDir, TagSetEditor, writePromptWorkbenchDataDir } from "./components/TagSetEditor";
+import { readPromptWorkbenchDataDir, TagSetEditor } from "./components/TagSetEditor";
 import {
   DEFAULT_CATALOG_FILE_NAME,
   duplicateMap,
@@ -622,7 +622,7 @@ export function App() {
   const [soundEnabled, setSoundEnabled] = useState(readDragSoundPreference);
   const [favoriteTags, setFavoriteTags] = useState(() => readFavoriteSettings().favorites);
   const [favoriteTagSets, setFavoriteTagSets] = useState(() => readFavoriteSettings().favoriteTagSets);
-  const [promptWorkbenchDataDir, setPromptWorkbenchDataDir] = useState(readPromptWorkbenchDataDir);
+  const [promptWorkbenchDataDir] = useState(readPromptWorkbenchDataDir);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [saveMode, setSaveMode] = useState<SaveMode | null>(null);
@@ -2061,19 +2061,6 @@ export function App() {
                       </button>
                     </div>
                   </div>
-                  <label className="settings-field">
-                    <span>Prompt Workbench data フォルダ</span>
-                    <input
-                      value={promptWorkbenchDataDir}
-                      spellCheck={false}
-                      placeholder="未指定の場合は自動検出"
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setPromptWorkbenchDataDir(value);
-                        writePromptWorkbenchDataDir(value);
-                      }}
-                    />
-                  </label>
                 </div>
               )}
             </div>
@@ -2282,19 +2269,6 @@ export function App() {
                     {soundEnabled ? "オン" : "オフ"}
                   </button>
                 </div>
-                <label className="settings-field">
-                  <span>Prompt Workbench data フォルダ</span>
-                  <input
-                    value={promptWorkbenchDataDir}
-                    spellCheck={false}
-                    placeholder="未指定の場合は自動検出"
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setPromptWorkbenchDataDir(value);
-                      writePromptWorkbenchDataDir(value);
-                    }}
-                  />
-                </label>
                 <div className="settings-row">
                   <div>
                     <strong>共有パッケージ</strong>
