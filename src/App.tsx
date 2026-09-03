@@ -64,9 +64,12 @@ import { categoryPath, sortedChildren } from "./domain/operations";
 import {
   favoriteTagKey,
   favoriteTagSetKey,
+  mergeFavoriteSettings,
   readFavoriteSettings,
+  readSharedFavoriteSettings,
   toggleFavorite,
   writeFavoriteSettings,
+  writeSharedFavoriteSettings,
 } from "./domain/favorites";
 import {
   comparableTagSetDocument,
@@ -711,9 +714,17 @@ export function App() {
 
   useKeyboardShortcuts({ tagSetMode: isTagSetMode, undoTagSet, redoTagSet });
 
+  const persistFavoriteSettings = (settings: { favorites: string[]; favoriteTagSets: string[] }) => {
+    const merged = mergeFavoriteSettings(settings);
+    writeFavoriteSettings(merged);
+    void writeSharedFavoriteSettings(merged);
+    return merged;
+  };
+
   const updateFavorites = (nextFavorites: string[]) => {
-    setFavoriteTags(nextFavorites);
-    writeFavoriteSettings({ favorites: nextFavorites, favoriteTagSets });
+    const merged = persistFavoriteSettings({ favorites: nextFavorites, favoriteTagSets });
+    setFavoriteTags(merged.favorites);
+    setFavoriteTagSets(merged.favoriteTagSets);
   };
 
   useEffect(() => {
@@ -725,14 +736,16 @@ export function App() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const filePath = defaultDataDisplayPath(response, DEFAULT_CATALOG_URL);
         const source = await response.text();
-        const storedFavorites = readFavoriteSettings().favorites;
+        const storedFavoriteSettings = mergeFavoriteSettings(readFavoriteSettings(), await readSharedFavoriteSettings());
         const parsed = {
           ...parseCatalogText(source, "tag_catalog.json"),
           filePath,
         };
         setFactoryCatalogDocument(structuredClone(parsed));
-        store.load(addMissingFavoriteTags(parsed, storedFavorites));
-        updateFavorites(storedFavorites);
+        store.load(addMissingFavoriteTags(parsed, storedFavoriteSettings.favorites));
+        const mergedFavorites = persistFavoriteSettings(storedFavoriteSettings);
+        setFavoriteTags(mergedFavorites.favorites);
+        setFavoriteTagSets(mergedFavorites.favoriteTagSets);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         store.load(emptyCatalogDocument("tag_catalog.json", new URL(DEFAULT_CATALOG_URL, window.location.href).href));
@@ -1037,12 +1050,14 @@ export function App() {
         setCurrentTagSetFileHandle(fileHandle);
         store.clearSelection();
       } else {
-        const storedFavorites = readFavoriteSettings().favorites;
+        const storedFavoriteSettings = mergeFavoriteSettings(readFavoriteSettings(), await readSharedFavoriteSettings());
         const parsed = parseCatalogText(source, file.name);
         const nextDocument = filePath ? { ...parsed, filePath } : parsed;
-        store.load(addMissingFavoriteTags(nextDocument, storedFavorites));
+        store.load(addMissingFavoriteTags(nextDocument, storedFavoriteSettings.favorites));
         setCurrentCatalogFileHandle(fileHandle);
-        updateFavorites(storedFavorites);
+        const mergedFavorites = persistFavoriteSettings(storedFavoriteSettings);
+        setFavoriteTags(mergedFavorites.favorites);
+        setFavoriteTagSets(mergedFavorites.favoriteTagSets);
       }
       setToast({ message: `${file.name} を読み込みました` });
     } catch (error) {
@@ -1877,8 +1892,9 @@ export function App() {
     dragSounds.current.cancel();
   };
   const updateTagSetFavorites = (nextFavorites: string[]) => {
-    setFavoriteTagSets(nextFavorites);
-    writeFavoriteSettings({ favorites: favoriteTags, favoriteTagSets: nextFavorites });
+    const merged = persistFavoriteSettings({ favorites: favoriteTags, favoriteTagSets: nextFavorites });
+    setFavoriteTags(merged.favorites);
+    setFavoriteTagSets(merged.favoriteTagSets);
   };
   const toggleTagFavorite = (tag: TagOccurrence) => {
     const next = toggleFavorite(favoriteTags, tag.prompt);

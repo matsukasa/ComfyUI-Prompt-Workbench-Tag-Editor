@@ -3,7 +3,9 @@ export interface FavoriteSettings {
   favoriteTagSets: string[];
 }
 
+export const FAVORITES_SCHEMA = "prompt-workbench/favorites";
 export const FAVORITES_STORAGE_KEY = "prompt-workbench:favorites";
+export const FAVORITES_ROUTE = "/prompt-workbench-data/favorites";
 
 export function favoriteTagKey(value: string): string {
   return String(value || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
@@ -26,14 +28,34 @@ export function sanitizeFavorites(values: unknown): string[] {
 
 export function parseFavoriteSettings(value: unknown): FavoriteSettings {
   if (Array.isArray(value)) return { favorites: sanitizeFavorites(value), favoriteTagSets: [] };
-  if (value && typeof value === "object" && "favorites" in value) {
-    const settings = value as { favorites?: unknown; favoriteTagSets?: unknown };
+  if (value && typeof value === "object") {
+    const settings = value as { schema?: unknown; version?: unknown; favorites?: unknown; favoriteTagSets?: unknown };
+    if (settings.schema && (settings.schema !== FAVORITES_SCHEMA || settings.version !== 1)) {
+      return { favorites: [], favoriteTagSets: [] };
+    }
     return {
       favorites: sanitizeFavorites(settings.favorites),
       favoriteTagSets: sanitizeFavorites(settings.favoriteTagSets).slice(0, 2000),
     };
   }
   return { favorites: [], favoriteTagSets: [] };
+}
+
+export function mergeFavoriteSettings(...settingsList: FavoriteSettings[]): FavoriteSettings {
+  return parseFavoriteSettings({
+    favorites: settingsList.flatMap((settings) => settings.favorites),
+    favoriteTagSets: settingsList.flatMap((settings) => settings.favoriteTagSets),
+  });
+}
+
+export function favoriteSettingsPayload(settings: FavoriteSettings) {
+  const sanitized = parseFavoriteSettings(settings);
+  return {
+    schema: FAVORITES_SCHEMA,
+    version: 1,
+    favorites: sanitized.favorites,
+    favoriteTagSets: sanitized.favoriteTagSets,
+  };
 }
 
 export function readFavoriteSettings(): FavoriteSettings {
@@ -52,13 +74,35 @@ export function writeFavoriteSettings(settings: FavoriteSettings): void {
   try {
     window.localStorage.setItem(
       FAVORITES_STORAGE_KEY,
-      JSON.stringify({
-        favorites: sanitizeFavorites(settings.favorites),
-        favoriteTagSets: sanitizeFavorites(settings.favoriteTagSets).slice(0, 2000),
-      }),
+      JSON.stringify(favoriteSettingsPayload(settings)),
     );
   } catch {
     // Favorites are user convenience data; catalog editing must continue if storage is unavailable.
+  }
+}
+
+export async function readSharedFavoriteSettings(): Promise<FavoriteSettings> {
+  if (typeof fetch === "undefined") return { favorites: [], favoriteTagSets: [] };
+  try {
+    const response = await fetch(FAVORITES_ROUTE, { cache: "no-store" });
+    if (!response.ok) return { favorites: [], favoriteTagSets: [] };
+    return parseFavoriteSettings(await response.json());
+  } catch {
+    return { favorites: [], favoriteTagSets: [] };
+  }
+}
+
+export async function writeSharedFavoriteSettings(settings: FavoriteSettings): Promise<boolean> {
+  if (typeof fetch === "undefined") return false;
+  try {
+    const response = await fetch(FAVORITES_ROUTE, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(favoriteSettingsPayload(settings)),
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 

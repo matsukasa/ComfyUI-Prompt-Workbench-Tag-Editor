@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { existsSync, mkdirSync, readFileSync, statSync, copyFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, copyFileSync, writeFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,12 +34,86 @@ function resolvePromptWorkbenchData() {
 
 const promptWorkbenchData = resolvePromptWorkbenchData();
 const localDataRoute = "/prompt-workbench-data/";
+const favoritesRoute = `${localDataRoute}favorites`;
 const imageSaveRoute = `${localDataRoute}tag-set-images`;
 const sourceImageRoute = `${localDataRoute}source-image`;
 const imageDirectory = path.join(promptWorkbenchData, "tag-set-images");
 const distImageDirectory = path.join(root, "dist", "client", "prompt-workbench-data", "tag-set-images");
 const defaultDataFiles = ["tag_catalog.json", "tag_sets.json"];
 const allowedDataDirectories = new Set([path.resolve(promptWorkbenchData)]);
+const favoritesSchema = "prompt-workbench/favorites";
+
+function resolvePromptWorkbenchUserDirectory() {
+  if (process.env.PROMPT_WORKBENCH_FAVORITES_FILE) {
+    return path.dirname(path.resolve(process.env.PROMPT_WORKBENCH_FAVORITES_FILE));
+  }
+  if (process.env.PROMPT_WORKBENCH_USER_DIR) {
+    return path.resolve(process.env.PROMPT_WORKBENCH_USER_DIR, "prompt_workbench");
+  }
+  if (process.env.PROMPT_WORKBENCH_DIR) {
+    return path.resolve(process.env.PROMPT_WORKBENCH_DIR, "user_data", "prompt_workbench");
+  }
+  return path.resolve(promptWorkbenchData, "..", "user_data", "prompt_workbench");
+}
+
+const promptWorkbenchUserDirectory = resolvePromptWorkbenchUserDirectory();
+const favoritesFilePath = process.env.PROMPT_WORKBENCH_FAVORITES_FILE
+  ? path.resolve(process.env.PROMPT_WORKBENCH_FAVORITES_FILE)
+  : path.join(promptWorkbenchUserDirectory, "favorites.json");
+
+function normalizeFavoriteKey(value) {
+  return String(value || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
+}
+
+function sanitizeFavoriteList(values, limit = 20000) {
+  const seen = new Set();
+  for (const value of Array.isArray(values) ? values : []) {
+    const key = normalizeFavoriteKey(value);
+    if (key) seen.add(key);
+    if (seen.size >= limit) break;
+  }
+  return [...seen].sort();
+}
+
+function sanitizeFavoriteSettings(value) {
+  if (Array.isArray(value)) {
+    return { schema: favoritesSchema, version: 1, favorites: sanitizeFavoriteList(value), favoriteTagSets: [] };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { schema: favoritesSchema, version: 1, favorites: [], favoriteTagSets: [] };
+  }
+  if ("schema" in value && (value.schema !== favoritesSchema || value.version !== 1)) {
+    throw new Error("Unsupported favorites schema");
+  }
+  return {
+    schema: favoritesSchema,
+    version: 1,
+    favorites: sanitizeFavoriteList(value.favorites),
+    favoriteTagSets: sanitizeFavoriteList(value.favoriteTagSets, 2000),
+  };
+}
+
+function emptyFavorites() {
+  return { schema: favoritesSchema, version: 1, favorites: [], favoriteTagSets: [] };
+}
+
+function readRequestBody(request, limit = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("Request body is too large"));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("error", reject);
+  });
+}
 
 function safeImageFileName(value) {
   let input = String(value || "");
@@ -126,6 +200,50 @@ async function blueskyImageResponse(sourceUrl, imageIndex = 0) {
 }
 
 function promptWorkbenchDataPlugin() {
+  const handleFavoritesFile = (request, response, next) => {
+    const requestUrl = request.url ?? "";
+    const parsedUrl = new URL(requestUrl, "http://localhost");
+    if (parsedUrl.pathname !== favoritesRoute) {
+      next();
+      return;
+    }
+    if (request.method === "GET") {
+      try {
+        const payload = existsSync(favoritesFilePath) && statSync(favoritesFilePath).isFile()
+          ? sanitizeFavoriteSettings(JSON.parse(readFileSync(favoritesFilePath, "utf8")))
+          : emptyFavorites();
+        response.setHeader("Content-Type", "application/json; charset=utf-8");
+        response.setHeader("Cache-Control", "no-store");
+        response.setHeader("X-Prompt-Workbench-File-Path", encodeURIComponent(favoritesFilePath));
+        response.end(JSON.stringify(payload));
+      } catch (error) {
+        response.statusCode = 500;
+        response.end(error instanceof Error ? error.message : "Failed to read favorites");
+      }
+      return;
+    }
+    if (request.method === "PUT") {
+      readRequestBody(request)
+        .then((source) => {
+          const payload = sanitizeFavoriteSettings(JSON.parse(source || "{}"));
+          mkdirSync(path.dirname(favoritesFilePath), { recursive: true });
+          const tempPath = `${favoritesFilePath}.${process.pid}.tmp`;
+          writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+          renameSync(tempPath, favoritesFilePath);
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store");
+          response.end(JSON.stringify(payload));
+        })
+        .catch((error) => {
+          response.statusCode = error instanceof Error && error.message.includes("too large") ? 413 : 400;
+          response.end(error instanceof Error ? error.message : "Failed to save favorites");
+        });
+      return;
+    }
+    response.statusCode = 405;
+    response.end("Method not allowed");
+  };
+
   const serveDataFile = (request, response, next) => {
     const requestUrl = request.url ?? "";
     if (!requestUrl.startsWith(localDataRoute)) {
@@ -133,6 +251,10 @@ function promptWorkbenchDataPlugin() {
       return;
     }
     if (requestUrl.startsWith(`${imageSaveRoute}/`)) {
+      next();
+      return;
+    }
+    if (requestUrl.split("?")[0] === favoritesRoute) {
       next();
       return;
     }
@@ -303,6 +425,7 @@ function promptWorkbenchDataPlugin() {
   return {
     name: "prompt-workbench-default-data",
     configureServer(server) {
+      server.middlewares.use(handleFavoritesFile);
       server.middlewares.use(fetchSourceImage);
       server.middlewares.use(deleteImageFile);
       server.middlewares.use(saveImageFile);
@@ -310,6 +433,7 @@ function promptWorkbenchDataPlugin() {
       server.middlewares.use(serveDataFile);
     },
     configurePreviewServer(server) {
+      server.middlewares.use(handleFavoritesFile);
       server.middlewares.use(fetchSourceImage);
       server.middlewares.use(deleteImageFile);
       server.middlewares.use(saveImageFile);
