@@ -547,13 +547,13 @@ test("share package selected-only export is empty when nothing is selected", () 
   assert.equal(pkg.catalogPatch?.operations.length, 0);
 });
 
-test("export dialog exposes scope choices and selection counts", () => {
+test("export dialog fixes export scope to selected items", () => {
   const appSource = readFileSync(join(process.cwd(), "src", "App.tsx"), "utf8");
   const tagSetEditorSource = readFileSync(join(process.cwd(), "src", "components", "TagSetEditor.tsx"), "utf8");
 
-  assert.match(appSource, /aria-label="Export範囲"/u);
-  assert.match(appSource, /自分で作成した差分/u);
-  assert.match(appSource, /選択した項目/u);
+  assert.doesNotMatch(appSource, /aria-label="Export範囲"/u);
+  assert.doesNotMatch(appSource, /自分で作成した差分/u);
+  assert.match(appSource, /exportScope: "selectedOnly"/u);
   assert.match(appSource, /Export対象: タグ \{selectedExportCounts\.catalog\}件 \/ タグセット \{selectedExportCounts\.tagsets\}件/u);
   assert.match(appSource, /選択した項目がありません/u);
   assert.match(appSource, /disabled=\{Boolean\(packageExportDisabledReason\)\}/u);

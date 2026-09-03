@@ -91,7 +91,6 @@ import {
   type ImportSelection,
   type ImportPreview,
   type PackageContentType,
-  type PackageExportScope,
   type SharePackageImageAsset,
 } from "./domain/packages";
 import type { CatalogDocument, CategoryNode, TagOccurrence, TagSetDocument, TagSetItem } from "./domain/types";
@@ -493,11 +492,6 @@ function packageContentLabel(value: PackageContentType): string {
   return "両方書き出し";
 }
 
-function packageExportScopeLabel(value: PackageExportScope): string {
-  if (value === "selectedOnly") return "選択した項目";
-  return "自分で作成した差分";
-}
-
 function formatImportDate(value: string): string {
   if (!value) return "日時不明";
   const date = new Date(value);
@@ -631,7 +625,6 @@ export function App() {
   const [packageVersion, setPackageVersion] = useState(1);
   const [packageNote, setPackageNote] = useState("");
   const [packageContentType, setPackageContentType] = useState<PackageContentType>("Full");
-  const [packageExportScope, setPackageExportScope] = useState<PackageExportScope>("localOnly");
   const [packagePreview, setPackagePreview] = useState<ImportPreview | null>(null);
   const [packageImportSelection, setPackageImportSelection] = useState<ImportSelection>({ catalog: true, tagsets: true });
   const [packageConflictResolution, setPackageConflictResolution] = useState<ConflictResolution>("stop");
@@ -978,14 +971,14 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
-        exportScope: packageExportScope,
+        exportScope: "selectedOnly",
         selectedCatalogTagIds: store.selectedTagIds,
         selectedTagSetIds: checkedTagSetIds,
       });
     } catch {
       return null;
     }
-  }, [catalogExportBaseline, checkedTagSetIds, document, packageContentType, packageDialogMode, packageExportScope, packageName, packageNote, packageVersion, store.selectedTagIds, tagSetDocument, tagSetExportBaseline]);
+  }, [catalogExportBaseline, checkedTagSetIds, document, packageContentType, packageDialogMode, packageName, packageNote, packageVersion, store.selectedTagIds, tagSetDocument, tagSetExportBaseline]);
   const importHistory = useMemo<DisplayImportHistoryEntry[]>(() => {
     const entries = new Map<string, DisplayImportHistoryEntry>();
     for (const root of [document?.original, tagSetDocument?.original]) {
@@ -1220,7 +1213,7 @@ export function App() {
         catalogDocument: document,
         tagSetBaseline: tagSetExportBaseline,
         tagSetDocument,
-        exportScope: packageExportScope,
+        exportScope: "selectedOnly",
         selectedCatalogTagIds: store.selectedTagIds,
         selectedTagSetIds: checkedTagSetIds,
       });
@@ -1425,7 +1418,7 @@ export function App() {
       ? ""
       : packageBusy
         ? "書き出し中です。"
-        : packageExportScope === "selectedOnly" && selectedExportCounts.catalog + selectedExportCounts.tagsets === 0
+        : selectedExportCounts.catalog + selectedExportCounts.tagsets === 0
           ? "選択した項目がありません。"
           : packageExportPreview && packageExportOperationCount === 0
             ? "書き出せる差分がありません。"
@@ -1506,24 +1499,9 @@ export function App() {
                 </button>
               ))}
             </div>
-            <div className="package-content-options" role="radiogroup" aria-label="Export範囲">
-              {(["localOnly", "selectedOnly"] as PackageExportScope[]).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={packageExportScope === value ? "is-active" : ""}
-                  onClick={() => setPackageExportScope(value)}
-                  aria-pressed={packageExportScope === value}
-                >
-                  {packageExportScopeLabel(value)}
-                </button>
-              ))}
-            </div>
-            {packageExportScope === "selectedOnly" && (
-              <p className="package-selection-status">
-                Export対象: タグ {selectedExportCounts.catalog}件 / タグセット {selectedExportCounts.tagsets}件
-              </p>
-            )}
+            <p className="package-selection-status">
+              Export対象: タグ {selectedExportCounts.catalog}件 / タグセット {selectedExportCounts.tagsets}件
+            </p>
             <p className="package-filename">
               {packageFileName(packageName, packageContentType, packageVersion)}
             </p>
