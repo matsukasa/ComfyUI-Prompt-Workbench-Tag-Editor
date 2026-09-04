@@ -208,7 +208,26 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
     mutate(set, (document) => renameTag(document, uid, prompt, translationJa));
     set((state) => ({ touchedTagIds: [...new Set([...state.touchedTagIds, uid])] }));
   },
-  createTags: (categoryId, values) => mutate(set, (document) => addTags(document, categoryId, values)),
+  createTags: (categoryId, values) =>
+    set((state) => {
+      if (!state.document) return {};
+      try {
+        const existingTagIds = new Set(state.document.tags.map((tag) => tag.uid));
+        const next = addTags(state.document, categoryId, values);
+        const addedTagIds = next.tags.filter((tag) => !existingTagIds.has(tag.uid)).map((tag) => tag.uid);
+        return {
+          document: next,
+          history: [...state.history, state.document].slice(-100),
+          future: [],
+          selectedTagIds: addedTagIds.length ? addedTagIds : state.selectedTagIds,
+          touchedTagIds: [...new Set([...state.touchedTagIds, ...addedTagIds])],
+          anchorTagId: addedTagIds.at(-1) ?? state.anchorTagId,
+          error: null,
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "操作に失敗しました。" };
+      }
+    }),
   removeTags: (uids) => {
     if (!uids.length) return;
     const removed = new Set(uids);

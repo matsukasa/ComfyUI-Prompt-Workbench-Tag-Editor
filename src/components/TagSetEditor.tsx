@@ -1215,10 +1215,12 @@ export function TagSetEditor({
   const addSet = () => {
     if (!selectedSmall) return;
     const nextIndex = selectedSmall.sets.length;
+    let addedSetId: string | null = null;
     update((draft) => {
       const target = draft.majorCategories[smallSelection.majorIndex].mediumCategories[smallSelection.mediumIndex]
         .smallCategories[smallSelection.smallIndex];
       const id = nextSetId(target.id, target.sets);
+      addedSetId = id;
       target.sets.push({
         id,
         name: "",
@@ -1233,6 +1235,9 @@ export function TagSetEditor({
       });
     });
     setSetSelection({ ...smallSelection, setIndex: nextIndex });
+    if (addedSetId) {
+      setCheckedSetIds((current) => current.includes(addedSetId) ? current : [...current, addedSetId]);
+    }
   };
 
   const deleteSelectedSet = () => {

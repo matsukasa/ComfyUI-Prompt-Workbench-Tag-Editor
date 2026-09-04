@@ -559,6 +559,7 @@ test("export dialog fixes export scope to selected items", () => {
   assert.match(appSource, /disabled=\{Boolean\(packageExportDisabledReason\)\}/u);
   assert.match(appSource, /onCheckedSetIdsChange=\{setCheckedTagSetIds\}/u);
   assert.match(tagSetEditorSource, /Export対象 \{checkedSetIds\.length\}件/u);
+  assert.match(tagSetEditorSource, /setCheckedSetIds\(\(current\) => current\.includes\(addedSetId\) \? current : \[\.{3}current, addedSetId\]\)/u);
 });
 
 test("share package changes CSV has a Japanese header and UTF-8 BOM", () => {
