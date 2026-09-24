@@ -102,6 +102,19 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function stripFavoriteFlags<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => stripFavoriteFlags(item)) as T;
+  if (value && typeof value === "object") {
+    const output: JsonObject = {};
+    for (const [key, item] of Object.entries(value as JsonObject)) {
+      if (key === "favorite") continue;
+      output[key] = stripFavoriteFlags(item);
+    }
+    return output as T;
+  }
+  return value;
+}
+
 function asObject(value: JsonValue | undefined): JsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -162,7 +175,7 @@ function categoryPayload(category: CategoryNode): JsonObject {
     labelEn: category.labelEn,
     descriptionJa: category.descriptionJa,
     order: category.order,
-    raw: clone(category.raw),
+    raw: stripFavoriteFlags(clone(category.raw)),
   };
 }
 
@@ -176,7 +189,7 @@ function tagPayload(tag: TagOccurrence): JsonObject {
     aliases: [...tag.aliases],
     postCount: tag.postCount,
     order: tag.order,
-    raw: clone(tag.raw),
+    raw: stripFavoriteFlags(clone(tag.raw)),
   };
 }
 
@@ -193,7 +206,7 @@ function setPayload(set: TagSetItem, smallId: string, order: number): JsonObject
     imageUrl: set.imageUrl,
     imagePath: set.imagePath,
     tags: [...set.tags],
-    raw: clone(set.raw),
+    raw: stripFavoriteFlags(clone(set.raw)),
   };
 }
 
@@ -419,7 +432,7 @@ function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument,
         order: majorIndex,
         labelJa: major.labelJa,
         labelEn: major.labelEn,
-        raw: clone(major.raw),
+        raw: stripFavoriteFlags(clone(major.raw)),
       });
       major.mediumCategories.forEach((medium, mediumIndex) => {
         sink.set(`medium:${medium.id}`, {
@@ -429,7 +442,7 @@ function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument,
           order: mediumIndex,
           labelJa: medium.labelJa,
           labelEn: medium.labelEn,
-          raw: clone(medium.raw),
+          raw: stripFavoriteFlags(clone(medium.raw)),
         });
         medium.smallCategories.forEach((small, smallIndex) => {
           sink.set(`small:${small.id}`, {
@@ -439,7 +452,7 @@ function tagSetCategoryOperations(before: TagSetDocument, after: TagSetDocument,
             order: smallIndex,
             labelJa: small.labelJa,
             labelEn: small.labelEn,
-            raw: clone(small.raw),
+            raw: stripFavoriteFlags(clone(small.raw)),
           });
         });
       });
@@ -1354,7 +1367,7 @@ export function previewImport(options: {
 
 export function exportPreviewJson(catalog?: CatalogDocument | null, tagSets?: TagSetDocument | null): Record<string, string> {
   return {
-    ...(catalog ? { "catalog.preview.json": serializeCatalog(catalog) } : {}),
-    ...(tagSets ? { "tag_sets.preview.json": serializeTagSetDocument(tagSets) } : {}),
+    ...(catalog ? { "catalog.preview.json": serializeCatalog(stripFavoriteFlags(clone(catalog))) } : {}),
+    ...(tagSets ? { "tag_sets.preview.json": serializeTagSetDocument(stripFavoriteFlags(clone(tagSets))) } : {}),
   };
 }

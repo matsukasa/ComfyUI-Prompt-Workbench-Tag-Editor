@@ -5,8 +5,8 @@ import test from "node:test";
 import { parseCatalogText } from "../src/domain/catalog.ts";
 import { getWorkbenchMeta, itemOrigin, markLocal } from "../src/domain/lineage.ts";
 import { deleteTags } from "../src/domain/operations.ts";
-import { createSharePackage, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
-import { parseTagSetText } from "../src/domain/tagSets.ts";
+import { createSharePackage, exportPreviewJson, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
+import { parseTagSetText, serializeTagSetDocument } from "../src/domain/tagSets.ts";
 
 const catalogSource = JSON.stringify(
   {
@@ -588,6 +588,72 @@ test("share package changes CSV has a Japanese header and UTF-8 BOM", () => {
 
   assert.equal(pkg.changesCsv.charCodeAt(0), 0xfeff);
   assert.equal(pkg.changesCsv.startsWith("\uFEFF\"変更種別\",\"データ種別\",\"ID\""), true);
+});
+
+test("tag set documents round-trip favorite flags during normal saves", () => {
+  const tagSets = parseTagSetText(JSON.stringify({
+    schema_version: 1,
+    major_categories: [{
+      id: "major",
+      label_ja: "Major",
+      medium_categories: [{
+        id: "medium",
+        label_ja: "Medium",
+        small_categories: [{
+          id: "small",
+          label_ja: "Small",
+          sets: [
+            { id: "set-a", name: "Set A", favorite: true, tags: ["a"] },
+            { id: "set-b", name: "Set B", favorite: false, tags: ["b"] },
+          ],
+        }],
+      }],
+    }],
+  }));
+  assert.equal(tagSets.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0].favorite, true);
+  const raw = JSON.parse(serializeTagSetDocument(tagSets));
+  assert.equal(raw.major_categories[0].medium_categories[0].small_categories[0].sets[0].favorite, true);
+  assert.equal("favorite" in raw.major_categories[0].medium_categories[0].small_categories[0].sets[1], false);
+});
+
+test("share package export and preview omit local favorite flags", () => {
+  const catalog = parseCatalogText(catalogSource, "tag_catalog.json");
+  const tagSets = parseTagSetText(tagSetSource, "tag_sets.json");
+  const exporter = structuredClone(catalog);
+  const tagSetsExporter = structuredClone(tagSets);
+  const tag = exporter.tags.find((item) => item.sourceId === "A")!;
+  tag.translationJa = "favorite local change";
+  tag.favorite = true;
+  tag.raw = markLocal({ ...tag.raw, favorite: true });
+  const set = tagSetsExporter.majorCategories[0].mediumCategories[0].smallCategories[0].sets[0];
+  set.tags = ["favorite local change"];
+  set.favorite = true;
+  set.raw = markLocal({ ...set.raw, favorite: true });
+
+  const pkg = createSharePackage({
+    packageName: "Favorites",
+    packageId: "pkg-favorites",
+    packageVersion: 1,
+    includeCatalog: true,
+    includeTagSets: true,
+    catalogBaseline: catalog,
+    catalogDocument: exporter,
+    tagSetBaseline: tagSets,
+    tagSetDocument: tagSetsExporter,
+    exportScope: "selectedOnly",
+    selectedCatalogTagIds: [tag.uid],
+    selectedTagSetIds: [set.id],
+  });
+  const zipFiles = readZip(packageToZip(pkg));
+  const catalogPatch = new TextDecoder().decode(zipFiles["catalog_patch.json"]);
+  const tagSetPatch = new TextDecoder().decode(zipFiles["tagset_patch.json"]);
+  assert.equal(catalogPatch.includes("\"favorite\""), false);
+  assert.equal(tagSetPatch.includes("\"favorite\""), false);
+
+  const preview = exportPreviewJson(exporter, tagSetsExporter);
+  assert.equal(preview["catalog.preview.json"].includes("\"favorite\""), false);
+  assert.equal(preview["tag_sets.preview.json"].includes("\"favorite\""), false);
+  assert.equal(serializeTagSetDocument(tagSetsExporter).includes("\"favorite\""), true);
 });
 
 test("share package import can skip conflicting operations", () => {

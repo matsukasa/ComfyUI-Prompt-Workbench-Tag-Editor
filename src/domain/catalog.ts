@@ -115,6 +115,7 @@ function parseBundled(root: JsonObject, fileName: string, formatMeta: FormatMeta
             aliases: asArray(tagValue.aliases).filter((item): item is string => typeof item === "string"),
             postCount: numberValue(tagValue.post_count),
             order: tagOrder++,
+            favorite: tagValue.favorite === true,
             raw: clone(tagValue),
           });
         }
@@ -164,6 +165,7 @@ function parseStored(root: JsonObject, fileName: string, formatMeta: FormatMetad
       aliases: asArray(value.aliases).filter((item): item is string => typeof item === "string"),
       postCount: numberValue(value.postCount),
       order: numberValue(value.order) ?? index,
+      favorite: value.favorite === true,
       raw: clone(value),
     });
   }
@@ -220,6 +222,8 @@ function bundledTag(tag: TagOccurrence): JsonObject {
   if (tag.translationJa || "translation_ja" in output) output.translation_ja = tag.translationJa;
   if (tag.aliases.length || "aliases" in output) output.aliases = [...tag.aliases];
   if (tag.postCount !== undefined || "post_count" in output) output.post_count = tag.postCount ?? 0;
+  if (tag.favorite === true) output.favorite = true;
+  else delete output.favorite;
   return output;
 }
 
@@ -280,14 +284,19 @@ function serializeStored(document: CatalogDocument): JsonObject {
     }));
   root.tags = [...document.tags]
     .sort((a, b) => a.order - b.order)
-    .map((tag) => ({
-      ...clone(tag.raw),
-      ...(tag.sourceId !== undefined ? { id: tag.sourceId } : {}),
-      categoryId: tag.categoryId,
-      prompt: tag.prompt,
-      ja: tag.translationJa,
-      order: tag.order,
-    }));
+    .map((tag) => {
+      const output = {
+        ...clone(tag.raw),
+        ...(tag.sourceId !== undefined ? { id: tag.sourceId } : {}),
+        categoryId: tag.categoryId,
+        prompt: tag.prompt,
+        ja: tag.translationJa,
+        order: tag.order,
+      };
+      if (tag.favorite === true) output.favorite = true;
+      else delete output.favorite;
+      return output;
+    });
   return root;
 }
 

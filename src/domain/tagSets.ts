@@ -50,6 +50,7 @@ function parseSet(value: JsonObject, fallbackId: string): TagSetItem {
     imageUrl: text(value.image_url),
     imagePath: text(value.image_path),
     tags: asArray(value.tags).filter((item): item is string => typeof item === "string"),
+    favorite: value.favorite === true,
     raw: clone(value),
   };
 }
@@ -139,6 +140,8 @@ function serializeSet(item: TagSetItem): JsonObject {
   if (item.sourceUrl || "source_url" in output) output.source_url = item.sourceUrl;
   if (item.imageUrl || "image_url" in output) output.image_url = item.imageUrl;
   if (item.imagePath || "image_path" in output) output.image_path = item.imagePath;
+  if (item.favorite === true) output.favorite = true;
+  else delete output.favorite;
   output.tags = item.tags.filter((tag) => tag.trim());
   return output;
 }

@@ -33,6 +33,7 @@ export interface TagOccurrence {
   aliases: string[];
   postCount?: number;
   order: number;
+  favorite?: boolean;
   raw: JsonObject;
 }
 
@@ -90,6 +91,7 @@ export interface TagSetItem {
   imageUrl: string;
   imagePath: string;
   tags: string[];
+  favorite?: boolean;
   raw: JsonObject;
 }
 

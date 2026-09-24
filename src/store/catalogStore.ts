@@ -50,6 +50,7 @@ interface StoreState {
   applyCategoryMove: (activeId: string, overId: string) => void;
   applyCategoryLevelChange: (id: string, targetLevel: "major" | "medium", parentId?: string) => void;
   editTag: (uid: string, prompt: string, translationJa: string) => void;
+  setTagFavorite: (uid: string, favorite: boolean) => void;
   createTags: (categoryId: string, values: string[]) => void;
   removeTags: (uids: string[]) => void;
   removeSelectedTags: () => void;
@@ -208,6 +209,16 @@ export const useCatalogStore = create<StoreState>((set, get) => ({
     mutate(set, (document) => renameTag(document, uid, prompt, translationJa));
     set((state) => ({ touchedTagIds: [...new Set([...state.touchedTagIds, uid])] }));
   },
+  setTagFavorite: (uid, favorite) =>
+    mutate(set, (document) => {
+      const next = structuredClone(document);
+      const tag = next.tags.find((item) => item.uid === uid);
+      if (!tag) return document;
+      tag.favorite = favorite;
+      if (favorite) tag.raw.favorite = true;
+      else delete tag.raw.favorite;
+      return next;
+    }),
   createTags: (categoryId, values) =>
     set((state) => {
       if (!state.document) return {};

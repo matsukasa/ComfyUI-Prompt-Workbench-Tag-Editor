@@ -317,6 +317,45 @@ function addMissingFavoriteTags(document: CatalogDocument, favorites: Iterable<s
   return next;
 }
 
+function catalogFavoriteKeys(document: CatalogDocument | null | undefined): string[] {
+  return (document?.tags ?? [])
+    .filter((tag) => tag.favorite === true || tag.raw.favorite === true)
+    .map((tag) => favoriteTagKey(tag.prompt))
+    .filter(Boolean);
+}
+
+function tagSetFavoriteKeys(document: TagSetDocument | null | undefined): string[] {
+  const keys: string[] = [];
+  for (const major of document?.majorCategories ?? []) {
+    for (const medium of major.mediumCategories) {
+      for (const small of medium.smallCategories) {
+        for (const item of small.sets) {
+          if (item.favorite === true || item.raw.favorite === true) keys.push(favoriteTagSetKey(item.id));
+        }
+      }
+    }
+  }
+  return keys.filter(Boolean);
+}
+
+function updateTagSetFavoriteFlag(document: TagSetDocument, id: string, favorite: boolean): TagSetDocument {
+  const target = favoriteTagSetKey(id);
+  const next = structuredClone(document);
+  for (const major of next.majorCategories) {
+    for (const medium of major.mediumCategories) {
+      for (const small of medium.smallCategories) {
+        for (const item of small.sets) {
+          if (favoriteTagSetKey(item.id) !== target) continue;
+          item.favorite = favorite;
+          if (favorite) item.raw.favorite = true;
+          else delete item.raw.favorite;
+        }
+      }
+    }
+  }
+  return next;
+}
+
 function downloadFile(
   document: NonNullable<ReturnType<typeof useCatalogStore.getState>["document"]>,
   name: string,
@@ -741,9 +780,12 @@ export function App() {
           ...parseCatalogText(source, "tag_catalog.json"),
           filePath,
         };
+        const mergedFavorites = persistFavoriteSettings(mergeFavoriteSettings(storedFavoriteSettings, {
+          favorites: catalogFavoriteKeys(parsed),
+          favoriteTagSets: [],
+        }));
         setFactoryCatalogDocument(structuredClone(parsed));
-        store.load(addMissingFavoriteTags(parsed, storedFavoriteSettings.favorites));
-        const mergedFavorites = persistFavoriteSettings(storedFavoriteSettings);
+        store.load(addMissingFavoriteTags(parsed, mergedFavorites.favorites));
         setFavoriteTags(mergedFavorites.favorites);
         setFavoriteTagSets(mergedFavorites.favoriteTagSets);
       } catch (error) {
@@ -761,10 +803,16 @@ export function App() {
           ...parseTagSetText(source, "tag_sets.json"),
           filePath,
         };
+        const mergedFavorites = persistFavoriteSettings(mergeFavoriteSettings(readFavoriteSettings(), await readSharedFavoriteSettings(), {
+          favorites: [],
+          favoriteTagSets: tagSetFavoriteKeys(parsed),
+        }));
         setFactoryTagSetDocument(structuredClone(parsed));
         replaceTagSetDocument(parsed);
         setTagSetBaseline(comparableTagSetDocument(parsed));
         setTagSetBaselineDocument(structuredClone(parsed));
+        setFavoriteTags(mergedFavorites.favorites);
+        setFavoriteTagSets(mergedFavorites.favoriteTagSets);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         setToast({ message: "タグセットを読み込めませんでした", detail: `タグカタログのみ読み込みました: ${detail}` });
@@ -1044,18 +1092,27 @@ export function App() {
       if (looksLikeTagSetJson(source)) {
         const parsed = parseTagSetText(source, file.name);
         const nextDocument = filePath ? { ...parsed, filePath } : parsed;
+        const mergedFavorites = persistFavoriteSettings(mergeFavoriteSettings(readFavoriteSettings(), await readSharedFavoriteSettings(), {
+          favorites: [],
+          favoriteTagSets: tagSetFavoriteKeys(nextDocument),
+        }));
         replaceTagSetDocument(nextDocument);
         setTagSetBaseline(comparableTagSetDocument(nextDocument));
         setTagSetBaselineDocument(structuredClone(nextDocument));
         setCurrentTagSetFileHandle(fileHandle);
+        setFavoriteTags(mergedFavorites.favorites);
+        setFavoriteTagSets(mergedFavorites.favoriteTagSets);
         store.clearSelection();
       } else {
         const storedFavoriteSettings = mergeFavoriteSettings(readFavoriteSettings(), await readSharedFavoriteSettings());
         const parsed = parseCatalogText(source, file.name);
         const nextDocument = filePath ? { ...parsed, filePath } : parsed;
-        store.load(addMissingFavoriteTags(nextDocument, storedFavoriteSettings.favorites));
+        const mergedFavorites = persistFavoriteSettings(mergeFavoriteSettings(storedFavoriteSettings, {
+          favorites: catalogFavoriteKeys(nextDocument),
+          favoriteTagSets: [],
+        }));
+        store.load(addMissingFavoriteTags(nextDocument, mergedFavorites.favorites));
         setCurrentCatalogFileHandle(fileHandle);
-        const mergedFavorites = persistFavoriteSettings(storedFavoriteSettings);
         setFavoriteTags(mergedFavorites.favorites);
         setFavoriteTagSets(mergedFavorites.favoriteTagSets);
       }
@@ -1898,6 +1955,7 @@ export function App() {
   };
   const toggleTagFavorite = (tag: TagOccurrence) => {
     const next = toggleFavorite(favoriteTags, tag.prompt);
+    store.setTagFavorite(tag.uid, next.includes(favoriteTagKey(tag.prompt)));
     updateFavorites(next);
     store.clearSelection();
     setToast({
@@ -1908,6 +1966,7 @@ export function App() {
   };
   const toggleTagSetFavorite = (id: string, name: string) => {
     const next = toggleFavorite(favoriteTagSets, id);
+    if (tagSetDocument) editTagSetDocument(updateTagSetFavoriteFlag(tagSetDocument, id, next.includes(favoriteTagSetKey(id))));
     updateTagSetFavorites(next);
     setToast({
       message: next.includes(favoriteTagSetKey(id))
