@@ -8,6 +8,22 @@ import { deleteTags } from "../src/domain/operations.ts";
 import { createSharePackage, exportPreviewJson, parsePackageZip, packageToZip, previewImport, readZip } from "../src/domain/packages.ts";
 import { parseTagSetText, serializeTagSetDocument } from "../src/domain/tagSets.ts";
 
+test("tag set IDs remain unique across loading and saving", () => {
+  const document = parseTagSetText(tagSetSource);
+  const small = document.majorCategories[0].mediumCategories[0].smallCategories[0];
+  const original = structuredClone(small.sets[0]);
+  small.sets = [original, { ...structuredClone(original), id: `${original.id}:duplicate:2` }, structuredClone(original)];
+  const source = JSON.parse(tagSetSource);
+  source.major_categories[0].medium_categories[0].small_categories[0].sets = small.sets.map((item) => ({ ...item.raw, id: item.id }));
+  const parsed = parseTagSetText(JSON.stringify(source));
+  const ids = parsed.majorCategories[0].mediumCategories[0].smallCategories[0].sets.map((item) => item.id);
+  assert.equal(new Set(ids).size, 3);
+  assert.equal(ids[2], `${original.id}:duplicate:3`);
+  const saved = serializeTagSetDocument(document);
+  assert.equal(serializeTagSetDocument(parseTagSetText(saved)), saved);
+  assert.equal(small.sets[2].id, original.id);
+});
+
 const catalogSource = JSON.stringify(
   {
     schema_version: 1,

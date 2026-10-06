@@ -26,6 +26,23 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function normalizeSetIds(categories: TagSetMajorCategory[]): void {
+  const items = categories.flatMap((major) => major.mediumCategories.flatMap((medium) =>
+    medium.smallCategories.flatMap((small) => small.sets)));
+  const reserved = new Set(items.map((item) => item.id));
+  const used = new Set<string>();
+  for (const item of items) {
+    if (used.has(item.id)) {
+      const base = item.id.slice(0, 140);
+      let suffix = 2;
+      let candidate = `${base}:duplicate:${suffix}`;
+      while (reserved.has(candidate) || used.has(candidate)) candidate = `${base}:duplicate:${++suffix}`;
+      item.id = candidate;
+    }
+    used.add(item.id);
+  }
+}
+
 function detectFormatMetadata(source: string): FormatMetadata {
   const content = source.startsWith("\uFEFF") ? source.slice(1) : source;
   const indentMatch = content.match(/\n( +)\S/u);
@@ -118,6 +135,7 @@ export function parseTagSetText(source: string, fileName = "tag_sets.json"): Tag
     });
   }
   if (!majorCategories.length) throw new Error("有効な大分類がありません。");
+  normalizeSetIds(majorCategories);
   return { fileName, formatMeta, original: clone(value), majorCategories };
 }
 
@@ -147,6 +165,8 @@ function serializeSet(item: TagSetItem): JsonObject {
 }
 
 export function serializeTagSetDocument(document: TagSetDocument): string {
+  document = clone(document);
+  normalizeSetIds(document.majorCategories);
   const root = clone(document.original);
   root.schema_version = 1;
   root.major_categories = document.majorCategories.map((major) => ({

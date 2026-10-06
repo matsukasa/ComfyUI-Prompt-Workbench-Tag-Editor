@@ -1219,7 +1219,9 @@ export function TagSetEditor({
     update((draft) => {
       const target = draft.majorCategories[smallSelection.majorIndex].mediumCategories[smallSelection.mediumIndex]
         .smallCategories[smallSelection.smallIndex];
-      const id = nextSetId(target.id, target.sets);
+      const allSets = draft.majorCategories.flatMap((major) => major.mediumCategories.flatMap((medium) =>
+        medium.smallCategories.flatMap((small) => small.sets)));
+      const id = nextSetId(target.id, allSets);
       addedSetId = id;
       target.sets.push({
         id,

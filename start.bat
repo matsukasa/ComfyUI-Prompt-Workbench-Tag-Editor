@@ -15,14 +15,15 @@ set "TAG_EDITOR_URL=http://127.0.0.1:5173/"
 powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing '%TAG_EDITOR_URL%' -TimeoutSec 1; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } } catch { exit 1 }"
 if not errorlevel 1 (
   echo Tag Editor is already running. Opening %TAG_EDITOR_URL%
-  start "" "%TAG_EDITOR_URL%"
+  powershell -NoProfile -File "%~dp0scripts\open-browser-window.ps1" -Url "%TAG_EDITOR_URL%"
   echo.
   echo If the browser still shows a black screen, press Ctrl+F5 in the browser to reload without cache.
   pause
   exit /b 0
 )
 echo Open %TAG_EDITOR_URL% in your browser.
-call npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort --open "%TAG_EDITOR_URL%"
+powershell -NoProfile -Command "Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile -File ""%~dp0scripts\open-browser-window.ps1"" -Url ""%TAG_EDITOR_URL%"" -WaitForServer'"
+call npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
 if errorlevel 1 (
   echo.
   echo [ERROR] Tag Editor could not start. Port 5173 may already be in use.
